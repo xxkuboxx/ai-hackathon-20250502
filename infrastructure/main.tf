@@ -7,7 +7,7 @@ terraform {
   }
 
   backend "gcs" {
-    bucket = "your-terraform-state-bucket"
+    bucket = "terraform-state-ai-hackathon-20250103"
     prefix = "terraform/state"
   }
 }
