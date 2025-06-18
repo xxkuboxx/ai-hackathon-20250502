@@ -16,8 +16,3 @@ provider "google" {
   project = var.project_id
   region  = "asia-northeast1"
 }
-
-variable "project_id" {
-  description = "The GCP project ID."
-  type        = string
-}
