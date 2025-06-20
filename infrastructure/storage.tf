@@ -39,3 +39,20 @@ resource "google_storage_bucket" "tracks_bucket" {
     # provider.google
   ]
 }
+
+
+# バケット内のオブジェクトを公開するためのIAM設定
+resource "google_storage_bucket_iam_member" "tracks_bucket_public_viewer" {
+  bucket = google_storage_bucket.tracks_bucket.name
+  role   = "roles/storage.objectViewer"
+  member = "allUsers"
+
+  depends_on = [google_storage_bucket.tracks_bucket] # バケット作成後にIAM設定を適用
+}
+
+resource "google_storage_bucket_iam_member" "uploads_bucket_public_viewer" {
+  bucket     = google_storage_bucket.uploads_bucket.name
+  role       = "roles/storage.objectViewer"
+  member     = "allUsers"
+  depends_on = [google_storage_bucket.uploads_bucket]
+}
