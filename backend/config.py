@@ -16,22 +16,11 @@ class Settings(BaseSettings):
     GCS_TRACK_BUCKET: str = Field(..., description="AIが生成したバッキングトラックを保存するGCSバケット名")
     GCS_LIFECYCLE_DAYS: int = Field(1, description="GCSオブジェクトの自動削除までの日数")
 
-    # Gemini API 設定
-    GEMINI_MODEL_NAME: str = Field("gemini-1.5-pro-latest", description="使用するGeminiモデル名")
-    GEMINI_API_KEY_SECRET_NAME: Optional[str] = Field(
-        None,
-        description="Gemini APIキーが格納されているSecret Managerのシークレット名"
-    )
-    # Pydantic v2では先頭アンダースコアのフィールド名はプライベート属性と見なされるため変更
-    gemini_api_key_env_var: Optional[str] = Field(  # <--- フィールド名変更
-        default=None,
-        alias="GEMINI_API_KEY", # 環境変数名と合わせる
-        validation_alias=AliasChoices("GEMINI_API_KEY"), # 環境変数名と合わせる
-        description="ローカル開発用のGemini APIキー (環境変数 GEMINI_API_KEY から直接読み込む)",
-        exclude=True # 最終的な settings オブジェクトには含めない (GEMINI_API_KEY_FINAL を使う)
-    )
-    GEMINI_API_KEY_FINAL: Optional[str] = None # 実際に使用するAPIキー
-    GEMINI_API_TIMEOUT_SECONDS: int = Field(120, description="Gemini API呼び出しのタイムアウト秒数")
+    # Vertex AI / Gemini 設定
+    VERTEX_AI_PROJECT_ID: Optional[str] = Field(None, description="Vertex AIを使用するGCPプロジェクトID。設定されていない場合、環境変数 GOOGLE_CLOUD_PROJECT から推測されます。")
+    VERTEX_AI_LOCATION: str = Field("asia-northeast1", description="Vertex AIモデルを使用するリージョン。例: us-central1, asia-northeast1")
+    GEMINI_MODEL_NAME: str = Field("gemini-2.0-flash", description="使用するGeminiモデル名 (Vertex AI)")
+    VERTEX_AI_TIMEOUT_SECONDS: int = Field(120, description="Vertex AI API呼び出しのタイムアウト秒数")
 
     # アプリケーション設定
     LOG_LEVEL: str = Field("INFO", description="アプリケーションログのレベル (INFO, DEBUGなど)")
@@ -47,6 +36,11 @@ class Settings(BaseSettings):
         description="IDトークンの期待されるオーディエンス (このバックエンドCloud RunサービスのURL)"
     )
 
+    # 元のGEMINI_API_KEY関連のフィールドはVertex AI移行に伴い削除
+    # GEMINI_API_KEY_SECRET_NAME: Optional[str] = Field(...)
+    # gemini_api_key_env_var: Optional[str] = Field(...)
+    # GEMINI_API_KEY_FINAL: Optional[str] = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding='utf-8',
@@ -54,31 +48,18 @@ class Settings(BaseSettings):
         case_sensitive=False
     )
 
-    def _fetch_secret_from_gcp(self, secret_full_name: str) -> Optional[str]:
-        if not secret_full_name or \
-           "YOUR_PROJECT_ID" in secret_full_name or \
-           "DUMMY_SECRET" in secret_full_name:
-            return None
-        try:
-            client = secretmanager.SecretManagerServiceClient()
-            response = client.access_secret_version(name=secret_full_name)
-            return response.payload.data.decode("UTF-8")
-        except Exception as e:
-            print(f"警告: Secret Managerからのシークレット '{secret_full_name}' の取得に失敗しました。エラー: {e}")
-            return None
+    # _fetch_secret_from_gcp はAPIキーを使わないため不要
+    # def _fetch_secret_from_gcp(self, secret_full_name: str) -> Optional[str]:
+    # ...
 
     @model_validator(mode='after')
     def _resolve_settings(self) -> 'Settings':
-        # Gemini APIキーの解決
-        if self.gemini_api_key_env_var: # <--- 参照するフィールド名を変更
-            self.GEMINI_API_KEY_FINAL = self.gemini_api_key_env_var
-        elif self.GEMINI_API_KEY_SECRET_NAME:
-            api_key_from_sm = self._fetch_secret_from_gcp(self.GEMINI_API_KEY_SECRET_NAME)
-            if api_key_from_sm:
-                self.GEMINI_API_KEY_FINAL = api_key_from_sm
-        
-        if not self.GEMINI_API_KEY_FINAL:
-             print("警告: GEMINI_API_KEYが決定できませんでした。AI関連機能が動作しない可能性があります。")
+        # Vertex AI Project ID の解決
+        if not self.VERTEX_AI_PROJECT_ID:
+            self.VERTEX_AI_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
+            if not self.VERTEX_AI_PROJECT_ID:
+                # サーバー起動時に警告を出す方が適切なので、ここではprintしない
+                pass
 
         # EXPECTED_AUDIENCEの解決 (Cloud Run環境で設定されていない場合)
         if not self.EXPECTED_AUDIENCE and os.environ.get("SERVICE_URL"):

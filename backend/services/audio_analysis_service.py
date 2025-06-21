@@ -6,42 +6,52 @@ import time
 import uuid
 from typing import TypedDict, List, Dict, Any, Optional, AsyncGenerator, Union
 
-from langgraph.graph import StateGraph, END, START # START をインポート
+from langgraph.graph import StateGraph, END, START
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessageChunk
-from langchain_google_genai import ChatGoogleGenerativeAI, HarmBlockThreshold, HarmCategory
-import google.generativeai as genai
+from langchain_core.exceptions import OutputParserException
 
-# 構造化出力用のPydanticモデルをインポートまたは定義
+from langchain_google_vertexai import ChatVertexAI, HarmCategory, HarmBlockThreshold
+
 from models import AnalysisResult, ErrorCode, ChordProgressionOutput, KeyOutput, BpmOutput, GenreOutput
-from exceptions import AnalysisFailedException, GenerationFailedException, GeminiAPIErrorException
+from exceptions import AnalysisFailedException, GenerationFailedException, GeminiAPIErrorException, ExternalServiceErrorException
 from config import settings
 
 logger = logging.getLogger(__name__)
 
-def get_gemini_llm(task_description: str, for_generation: bool = False) -> ChatGoogleGenerativeAI:
-    if not settings.GEMINI_API_KEY_FINAL:
-        logger.error(f"{task_description}用GEMINI_API_KEY_FINALが設定されていません。")
-        raise GeminiAPIErrorException(message="Gemini APIキーが設定されていません。", error_code=ErrorCode.GEMINI_API_ERROR)
+def get_vertex_llm(task_description: str, for_generation: bool = False) -> ChatVertexAI:
+    """
+    指定されたタスクのためのVertex AI LLMクライアントを取得します。
+    Vertex AIではAPIキーは通常ADC (Application Default Credentials) によって処理されます。
+    """
+    if not settings.VERTEX_AI_PROJECT_ID:
+        logger.error(f"{task_description}: VERTEX_AI_PROJECT_IDが設定されていません。")
+        raise ExternalServiceErrorException(message="Vertex AI プロジェクトIDが設定されていません。", error_code=ErrorCode.EXTERNAL_SERVICE_ERROR)
+
     try:
         temperature = 0.7 if for_generation else 0.3
-        llm = ChatGoogleGenerativeAI(
-            model=settings.GEMINI_MODEL_NAME, # config.py からモデル名を取得
-            google_api_key=settings.GEMINI_API_KEY_FINAL,
+
+        safety_settings_vertex = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        }
+
+        llm = ChatVertexAI(
+            project=settings.VERTEX_AI_PROJECT_ID,
+            location=settings.VERTEX_AI_LOCATION,
+            model_name=settings.GEMINI_MODEL_NAME,
             temperature=temperature,
-            request_timeout=settings.GEMINI_API_TIMEOUT_SECONDS,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            },
-            convert_system_message_to_human=True
+            request_timeout=settings.VERTEX_AI_TIMEOUT_SECONDS,
+            safety_settings=safety_settings_vertex,
         )
-        logger.info(f"'{task_description}'用ChatGoogleGenerativeAIをモデル'{settings.GEMINI_MODEL_NAME}'で初期化しました。")
+        logger.info(f"'{task_description}'用ChatVertexAIをモデル'{settings.GEMINI_MODEL_NAME}' (Project: {settings.VERTEX_AI_PROJECT_ID}, Location: {settings.VERTEX_AI_LOCATION})で初期化しました。")
         return llm
     except Exception as e:
-        logger.error(f"ChatGoogleGenerativeAIの初期化に失敗しました ('{task_description}'): {e}", exc_info=True)
-        raise GeminiAPIErrorException(message=f"Gemini LLMの初期化に失敗しました ('{task_description}')。", detail=str(e))
+        logger.error(f"ChatVertexAIの初期化に失敗しました ('{task_description}'): {e}", exc_info=True)
+        # GeminiAPIErrorExceptionを流用するが、エラーメッセージはVertex AIに合わせる
+        raise GeminiAPIErrorException(message=f"Vertex AI LLMの初期化に失敗しました ('{task_description}')。", detail=str(e), error_code=ErrorCode.GEMINI_API_ERROR)
+
 
 class AudioAnalysisWorkflowState(TypedDict):
     gcs_file_path: str
@@ -54,12 +64,12 @@ class AudioAnalysisWorkflowState(TypedDict):
     chords_estimation_error: Optional[str]
     estimated_genre: Optional[str]
     genre_estimation_error: Optional[str]
-    analysis_error: Optional[str] # 集約されたエラーメッセージ
-    generated_backing_track_data: Optional[str] # MusicXMLテキストを格納するため str に変更
+    analysis_error: Optional[str]
+    generated_backing_track_data: Optional[str]
     generation_error: Optional[str]
     final_analysis_result: Optional[AnalysisResult]
-    analysis_handled: Optional[bool] # エラー処理ノードが実行されたか
-    generation_handled: Optional[bool] # エラー処理ノードが実行されたか
+    analysis_handled: Optional[bool]
+    generation_handled: Optional[bool]
     entry_point_completed: Optional[bool]
 
 AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED = """
@@ -107,15 +117,15 @@ MusicXML構造のみ出力してください。
 コード部分のみをプレーンテキストで出力してください。
 """
 
-async def _call_gemini_api_with_logging(
-    llm: ChatGoogleGenerativeAI,
+async def _call_vertex_api_with_logging(
+    llm: ChatVertexAI,
     messages: List[Union[SystemMessage, HumanMessage, AIMessage]],
     task_description: str,
     request_params: Dict[str, Any],
     workflow_run_id: Optional[str] = None,
-    is_structured_output: bool = False, # 構造化出力を使用するかどうか
-    output_schema: Optional[Any] = None  # 構造化出力のスキーマ (Pydanticモデル)
-) -> Union[AIMessage, Any]: # 構造化出力の場合はパースされたオブジェクトを返す
+    is_structured_output: bool = False,
+    output_schema: Optional[Any] = None
+) -> Union[AIMessage, Any]:
     api_call_start_time = time.time()
     try:
         if is_structured_output and output_schema:
@@ -131,11 +141,10 @@ async def _call_gemini_api_with_logging(
         elif isinstance(response_data, AIMessage) and response_data.content:
             log_extra_response_data["response_content_length"] = len(str(response_data.content))
 
-
         logger.info(
-            f"Gemini API呼び出し成功 ({task_description})",
+            f"Vertex AI API呼び出し成功 ({task_description})",
             extra={
-                "target_service": "GeminiAPI", "gemini_model": settings.GEMINI_MODEL_NAME,
+                "target_service": "VertexAI", "vertex_model": settings.GEMINI_MODEL_NAME,
                 "task": task_description, "duration_seconds": api_call_duration,
                 "request_params": request_params, "workflow_run_id": workflow_run_id,
                 **log_extra_response_data
@@ -145,124 +154,115 @@ async def _call_gemini_api_with_logging(
     except Exception as e:
         api_call_duration = time.time() - api_call_start_time
         logger.error(
-            f"Gemini API呼び出し失敗 ({task_description})", exc_info=True,
+            f"Vertex AI API呼び出し失敗 ({task_description})", exc_info=True,
             extra={
-                "target_service": "GeminiAPI", "gemini_model": settings.GEMINI_MODEL_NAME,
+                "target_service": "VertexAI", "vertex_model": settings.GEMINI_MODEL_NAME,
                 "task": task_description, "duration_seconds": api_call_duration,
                 "request_params": request_params, "workflow_run_id": workflow_run_id,
                 "error_type": type(e).__name__,
             }
         )
-        if isinstance(e, genai.types.generation_types.BlockedPromptException): # type: ignore
-            raise GeminiAPIErrorException(message=f"{task_description}リクエストが安全フィルターでブロックされました。", detail=str(e))
+        # Vertex AI (LangChain経由) でのコンテンツブロックは、より一般的な例外でラップされる可能性がある
+        if "blocked" in str(e).lower() or "safety filter" in str(e).lower():
+            raise GeminiAPIErrorException(message=f"{task_description}リクエストが安全フィルターでブロックされた可能性があります (Vertex AI)。", detail=str(e), error_code=ErrorCode.GEMINI_API_ERROR)
         if isinstance(e, asyncio.TimeoutError):
-            raise GeminiAPIErrorException(message=f"{task_description}がタイムアウトしました。")
-        if "API key not valid" in str(e) or "PERMISSION_DENIED" in str(e):
-             raise GeminiAPIErrorException(message="Gemini APIキーが無効か、権限がありません。", detail=str(e))
-        from langchain_core.exceptions import OutputParsingException
-        if isinstance(e, OutputParsingException):
-             raise AnalysisFailedException(message=f"{task_description}: AIの応答形式が不正でパースできませんでした。", detail=getattr(e, 'llm_output', str(e)))
+            raise GeminiAPIErrorException(message=f"{task_description}がタイムアウトしました (Vertex AI)。", detail=str(e), error_code=ErrorCode.GEMINI_API_ERROR)
+        if isinstance(e, OutputParserException): # OutputParsingException から OutputParserException に修正済み
+             raise AnalysisFailedException(message=f"{task_description}: AIの応答形式が不正でパースできませんでした (Vertex AI)。", detail=getattr(e, 'llm_output', str(e)))
 
-        raise GeminiAPIErrorException(message=f"{task_description}中にエラーが発生しました。", detail=str(e))
+        raise GeminiAPIErrorException(message=f"{task_description}中にエラーが発生しました (Vertex AI)。", detail=str(e), error_code=ErrorCode.GEMINI_API_ERROR)
 
 
 async def _estimate_key_gemini(gcs_file_path: str, workflow_run_id: Optional[str]) -> str:
     task = "Key Estimation (Structured)"
-    llm = get_gemini_llm(task)
+    llm = get_vertex_llm(task)
     prompt_text = KEY_ESTIMATION_PROMPT_STRUCTURED.format(gcs_file_path=gcs_file_path)
     messages = [SystemMessage(content=AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED), HumanMessage(content=prompt_text)]
-    parsed_output: KeyOutput = await _call_gemini_api_with_logging( # type: ignore
+    parsed_output: KeyOutput = await _call_vertex_api_with_logging( # type: ignore
         llm, messages, task, {"gcs_file_path": gcs_file_path}, workflow_run_id,
         is_structured_output=True, output_schema=KeyOutput
     )
     if not parsed_output.primary_key or parsed_output.primary_key == "Undetermined":
-        logger.warning(f"[{task}] Gemini returned an undetermined primary key.")
+        logger.warning(f"[{task}] Vertex AI が未確定の主キーを返しました。")
         return "Undetermined"
     return parsed_output.primary_key
 
 async def _estimate_bpm_gemini(gcs_file_path: str, workflow_run_id: Optional[str]) -> int:
     task = "BPM Estimation (Structured)"
-    llm = get_gemini_llm(task)
+    llm = get_vertex_llm(task)
     prompt_text = BPM_ESTIMATION_PROMPT_STRUCTURED.format(gcs_file_path=gcs_file_path)
     messages = [SystemMessage(content=AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED), HumanMessage(content=prompt_text)]
-    parsed_output: BpmOutput = await _call_gemini_api_with_logging( # type: ignore
+    parsed_output: BpmOutput = await _call_vertex_api_with_logging( # type: ignore
         llm, messages, task, {"gcs_file_path": gcs_file_path}, workflow_run_id,
         is_structured_output=True, output_schema=BpmOutput
     )
     if parsed_output.bpm <= 0:
-        logger.warning(f"[{task}] Gemini returned invalid BPM: {parsed_output.bpm}")
-        raise AnalysisFailedException(message="AIが有効なBPMを返しませんでした。")
+        logger.warning(f"[{task}] Vertex AI が無効なBPMを返しました: {parsed_output.bpm}")
+        raise AnalysisFailedException(message="AIが有効なBPMを返しませんでした (Vertex AI)。")
     return parsed_output.bpm
 
 async def _estimate_chords_gemini(gcs_file_path: str, workflow_run_id: Optional[str]) -> List[str]:
     task = "Chord Progression Estimation (Structured)"
-    llm = get_gemini_llm(task)
+    llm = get_vertex_llm(task)
     prompt_text = CHORD_PROGRESSION_PROMPT_STRUCTURED.format(gcs_file_path=gcs_file_path)
     messages = [SystemMessage(content=AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED), HumanMessage(content=prompt_text)]
-    parsed_output: ChordProgressionOutput = await _call_gemini_api_with_logging( # type: ignore
+    parsed_output: ChordProgressionOutput = await _call_vertex_api_with_logging( # type: ignore
         llm, messages, task, {"gcs_file_path": gcs_file_path}, workflow_run_id,
         is_structured_output=True, output_schema=ChordProgressionOutput
     )
     if not parsed_output.chords:
-        logger.warning(f"[{task}] Gemini returned an empty list for chords.")
+        logger.warning(f"[{task}] Vertex AI がコード進行の空リストを返しました。")
         return ["Undetermined"]
     return parsed_output.chords
 
 async def _estimate_genre_gemini(gcs_file_path: str, workflow_run_id: Optional[str]) -> str:
     task = "Genre Estimation (Structured)"
-    llm = get_gemini_llm(task)
+    llm = get_vertex_llm(task)
     prompt_text = GENRE_ESTimation_PROMPT_STRUCTURED.format(gcs_file_path=gcs_file_path)
     messages = [SystemMessage(content=AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED), HumanMessage(content=prompt_text)]
-    parsed_output: GenreOutput = await _call_gemini_api_with_logging( # type: ignore
+    parsed_output: GenreOutput = await _call_vertex_api_with_logging( # type: ignore
         llm, messages, task, {"gcs_file_path": gcs_file_path}, workflow_run_id,
         is_structured_output=True, output_schema=GenreOutput
     )
     if not parsed_output.primary_genre or parsed_output.primary_genre == "Undetermined":
-        logger.warning(f"[{task}] Gemini returned an undetermined primary genre.")
+        logger.warning(f"[{task}] Vertex AI が未確定の主要ジャンルを返しました。")
         return "Undetermined"
     return parsed_output.primary_genre
 
-async def _generate_backing_track_gemini(key: str, bpm: int, chords: List[str], genre: str, workflow_run_id: Optional[str]) -> str: # 戻り値を str に変更
+async def _generate_backing_track_gemini(key: str, bpm: int, chords: List[str], genre: str, workflow_run_id: Optional[str]) -> str:
     task = "Backing Track Generation (MusicXML)"
-    llm = get_gemini_llm(task, for_generation=True)
+    llm = get_vertex_llm(task, for_generation=True)
     chords_str = ", ".join(chords)
     prompt_text = BACKING_TRACK_GENERATION_PROMPT_TEMPLATE.format(key=key, bpm=bpm, chords_str=chords_str, genre=genre)
     messages = [SystemMessage(content=MUSIC_GENERATION_SYSTEM_PROMPT), HumanMessage(content=prompt_text)]
     request_params = {"key": key, "bpm": bpm, "chords": chords_str, "genre": genre}
-    response: AIMessage = await _call_gemini_api_with_logging(llm, messages, task, request_params, workflow_run_id) # type: ignore
+    response: AIMessage = await _call_vertex_api_with_logging(llm, messages, task, request_params, workflow_run_id) # type: ignore
     content = response.content
 
-    logger.debug(f'############################# Raw content from LLM for MusicXML: {str(content)[:500]} ################################') # ログ出力を調整
-    
+    logger.debug(f'LLM (Vertex AI) からのMusicXML用Rawコンテント: {str(content)[:500]}')
+
     if isinstance(content, str):
-        # MusicXMLデータの抽出用に正規表現を変更
         musicxml_match = re.search(r"MUSICXML_START\s*([\s\S]+?)\s*MUSICXML_END", content, re.DOTALL)
         if musicxml_match:
             musicxml_text = musicxml_match.group(1).strip()
-            if not musicxml_text: 
-                raise GenerationFailedException(message="抽出されたMusicXMLデータが空です。", detail="LLM response contained MUSICXML_START and MUSICXML_END tags but no content between them.")
-            # MusicXMLとして基本的な形式を持っているか簡易チェック（オプション）
+            if not musicxml_text:
+                raise GenerationFailedException(message="抽出されたMusicXMLデータが空です (Vertex AI)。", detail="LLM response contained MUSICXML_START and MUSICXML_END tags but no content between them.")
             if not (musicxml_text.startswith("<?xml") or musicxml_text.startswith("<score-partwise")):
-                 logger.warning(f"Generated MusicXML may not be well-formed (does not start with <?xml or <score-partwise): {musicxml_text[:100]}")
-            return musicxml_text # MusicXMLテキストを直接返す
-        
-        # CANNOT_GENERATE_MUSICXML をチェックするように変更
+                 logger.warning(f"生成されたMusicXML (Vertex AI) は整形されていない可能性があります: {musicxml_text[:100]}")
+            return musicxml_text
+
         if "CANNOT_GENERATE_MUSICXML" in content.upper():
-            raise GenerationFailedException(message="GeminiがMusicXMLデータを生成できないと報告しました。", detail=content)
-        
-        # 上記のマーカーがない場合でも、内容がMusicXMLっぽいか最後の手段としてチェックすることもできるが、
-        # プロンプトでフォーマットを指示しているので、それに従わない場合はエラーとするのが妥当。
-        logger.warning(f"LLM response for MusicXML did not contain MUSICXML_START/END tags. Content: {content[:200]}")
+            raise GenerationFailedException(message="Vertex AI がMusicXMLデータを生成できないと報告しました。", detail=content)
+
+        logger.warning(f"LLM応答 (Vertex AI) のMusicXMLにMUSICXML_START/ENDタグが含まれていませんでした。コンテント: {content[:200]}")
         raise GenerationFailedException(
-            message="Geminiが期待する形式でMusicXMLデータを返しませんでした (MUSICXML_START/END タグが見つかりません)。", 
+            message="Vertex AI が期待する形式でMusicXMLデータを返しませんでした (MUSICXML_START/END タグが見つかりません)。",
             detail=f"Response (start): {str(content)[:200]}"
         )
 
-    # MusicXMLはテキストなので、strで返されることを期待する。
-    # AIMessage.content が bytes や他の型であるケースは LangChain/Gemini の使い方として通常想定しづらいが、念のため型チェック。
     raise GenerationFailedException(
-        message=f"バッキングトラック生成でGeminiから予期せぬ応答タイプ。期待したのはstrですが、得られたのは {type(content)} です。",
-        detail=f"Response content (type: {type(content)}): {str(content)[:200]}" # content が bytes の場合も考慮して str() で囲む
+        message=f"バッキングトラック生成でVertex AIから予期せぬ応答タイプ。期待したのはstrですが、得られたのは {type(content)} です。",
+        detail=f"Response content (type: {type(content)}): {str(content)[:200]}"
     )
 
 
@@ -322,7 +322,7 @@ async def node_aggregate_analysis_results(state: AudioAnalysisWorkflowState) -> 
     await node_log_start(state, node_name)
     start_time = time.time()
     output: Dict[str, Any] = {}
-    
+
     collected_errors = []
     if state.get("key_estimation_error"): collected_errors.append(state["key_estimation_error"]) # type: ignore
     if state.get("bpm_estimation_error"): collected_errors.append(state["bpm_estimation_error"]) # type: ignore
@@ -341,14 +341,14 @@ async def node_aggregate_analysis_results(state: AudioAnalysisWorkflowState) -> 
     if state.get("estimated_bpm") is None or state.get("estimated_bpm", 0) <= 0 : missing_details.append("BPM")
     if not state.get("estimated_chords") or state.get("estimated_chords") == ["Undetermined"]: missing_details.append("chords")
     if state.get("estimated_genre") == "Undetermined": missing_details.append("genre")
-    
+
     if missing_details:
         err_msg = f"必須の解析結果のいくつかが 'Undetermined' または無効です: {', '.join(missing_details)}。"
         logger.error(err_msg, extra={"workflow_run_id": state.get("workflow_run_id")})
         output["analysis_error"] = err_msg
         await node_log_end(state, node_name, start_time, output)
         return output
-    
+
     try:
         analysis_result = AnalysisResult(
             key=state.get("estimated_key", "Undetermined"),
@@ -360,7 +360,7 @@ async def node_aggregate_analysis_results(state: AudioAnalysisWorkflowState) -> 
     except Exception as e:
         logger.error(f"AnalysisResult Pydanticモデルの作成エラー: {e}", exc_info=True, extra={"workflow_run_id": state.get("workflow_run_id")})
         output["analysis_error"] = f"解析結果の最終処理に失敗しました: {str(e)}"
-    
+
     await node_log_end(state, node_name, start_time, output)
     return output
 
@@ -378,13 +378,12 @@ async def node_generate_backing_track(state: AudioAnalysisWorkflowState) -> Dict
         await node_log_end(state, node_name, start_time, output)
         return output
     try:
-        # _generate_backing_track_gemini は str (MusicXML テキスト) を返すように変更済み
         track_data_str = await _generate_backing_track_gemini(
             key=analysis_result.key, bpm=analysis_result.bpm,
             chords=analysis_result.chords, genre=analysis_result.genre_by_ai,
             workflow_run_id=state.get("workflow_run_id")
         )
-        output["generated_backing_track_data"] = track_data_str # 文字列データを格納
+        output["generated_backing_track_data"] = track_data_str
     except Exception as e: output["generation_error"] = f"{node_name} failed: {str(e)}"
     await node_log_end(state, node_name, start_time, output)
     return output
@@ -396,7 +395,6 @@ def should_proceed_to_generation(state: AudioAnalysisWorkflowState) -> str:
 
 def check_generation_outcome(state: AudioAnalysisWorkflowState) -> str:
     if state.get("generation_error"): return "handle_generation_error"
-    # generated_backing_track_data が文字列であり、空でないことを確認
     if not state.get("generated_backing_track_data"): return "handle_generation_error"
     return END
 
@@ -410,7 +408,7 @@ async def handle_generation_error_node(state: AudioAnalysisWorkflowState) -> Dic
 
 async def entry_point_node(state: AudioAnalysisWorkflowState) -> Dict[str, Any]:
     logger.info("Workflow entry point node executing.", extra={"workflow_run_id": state.get("workflow_run_id")})
-    return {"entry_point_completed": True} 
+    return {"entry_point_completed": True}
 
 workflow_v2 = StateGraph(AudioAnalysisWorkflowState)
 
@@ -428,7 +426,7 @@ workflow_v2.set_entry_point("entry_point")
 
 def select_analysis_branches_for_fan_out(state: AudioAnalysisWorkflowState) -> List[str]:
     branches = ["estimate_key_node", "estimate_bpm_node", "estimate_chords_node", "estimate_genre_node"]
-    logger.info(f"Conditional router: selecting branches for parallel analysis: {branches}", extra={"workflow_run_id": state.get("workflow_run_id")})
+    logger.info(f"条件付きルーター: 並列解析のためのブランチを選択: {branches}", extra={"workflow_run_id": state.get("workflow_run_id")})
     return branches
 
 workflow_v2.add_conditional_edges(
@@ -482,12 +480,12 @@ async def run_audio_analysis_workflow(gcs_file_path: str) -> AudioAnalysisWorkfl
         "estimated_genre": None,
         "genre_estimation_error": None,
         "analysis_error": None,
-        "generated_backing_track_data": None, # 初期値は None (str型)
+        "generated_backing_track_data": None,
         "generation_error": None,
         "final_analysis_result": None,
         "analysis_handled": None,
         "generation_handled": None,
-        "entry_point_completed": None 
+        "entry_point_completed": None
     }
     final_state = initial_state.copy()
 
@@ -503,12 +501,12 @@ async def run_audio_analysis_workflow(gcs_file_path: str) -> AudioAnalysisWorkfl
         final_state["analysis_error"] = current_analysis_error + error_addon
         current_generation_error = final_state.get("generation_error", "") or ""
         final_state["generation_error"] = current_generation_error + error_addon
-    
+
     duration = time.time() - start_time_overall
     log_extra = {
         "workflow_run_id": workflow_run_id, "gcs_file_path": gcs_file_path, "duration_seconds": duration,
         "analysis_result_present": bool(final_state.get("final_analysis_result")),
-        "generation_data_present": bool(final_state.get("generated_backing_track_data")), # 文字列データの存在確認
+        "generation_data_present": bool(final_state.get("generated_backing_track_data")),
         "analysis_error": final_state.get("analysis_error"), "generation_error": final_state.get("generation_error"),
     }
 
@@ -519,7 +517,6 @@ async def run_audio_analysis_workflow(gcs_file_path: str) -> AudioAnalysisWorkfl
     if not final_state.get("final_analysis_result"):
         detail = str(final_state.get('analysis_error')) if final_state.get('analysis_error') else "ワークフローは解析結果を生成せずに終了しました。"
         raise AnalysisFailedException(message="音声解析が正常に完了しませんでした（結果欠落）。", detail=detail)
-    # generated_backing_track_data が文字列であり、空でないことを確認
     if not final_state.get("generated_backing_track_data"):
         detail = str(final_state.get('generation_error')) if final_state.get('generation_error') else "ワークフローはバッキングトラックデータを生成せずに終了しました。"
         raise GenerationFailedException(message="バッキングトラック生成が正常に完了しませんでした（データ欠落）。", detail=detail)
