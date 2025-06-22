@@ -4,10 +4,10 @@ import logging
 from fastapi import APIRouter, Request, Body, Depends
 from fastapi.responses import StreamingResponse
 
-from ..models import ChatRequest, ChatMessage, ErrorCode, AnalysisResult
-from ..exceptions import VertexAIAPIErrorException, InternalServerErrorException # Changed
-from ..services.vertex_chat_service import VertexChatService, get_vertex_chat_service
-from ..services import prompts
+from models import ChatRequest, ChatMessage, ErrorCode, AnalysisResult
+from exceptions import VertexAIAPIErrorException, InternalServerErrorException # Changed
+from services.vertex_chat_service import VertexChatService, get_vertex_chat_service
+from services import prompts
 
 logger = logging.getLogger(__name__)
 

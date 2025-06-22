@@ -6,10 +6,10 @@ from typing import Union, List, AsyncGenerator, Optional
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessageChunk
 from langchain_google_vertexai import ChatVertexAI, HarmCategory, HarmBlockThreshold
 
-from ..models import ChatMessage, AnalysisResult, ErrorCode
-from ..config import settings
-from ..exceptions import VertexAIAPIErrorException, InternalServerErrorException # Changed
-from . import prompts
+from models import ChatMessage, AnalysisResult, ErrorCode
+from config import settings
+from exceptions import VertexAIAPIErrorException, InternalServerErrorException # Changed
+from services import prompts
 
 logger = logging.getLogger(__name__)
 

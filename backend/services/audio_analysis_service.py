@@ -10,10 +10,10 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, Base
 from langchain_core.exceptions import OutputParserException
 from langchain_google_vertexai import ChatVertexAI, HarmCategory, HarmBlockThreshold
 
-from ..models import AnalysisResult, ErrorCode, ChordProgressionOutput, KeyOutput, BpmOutput, GenreOutput
-from ..exceptions import AnalysisFailedException, GenerationFailedException, VertexAIAPIErrorException # Changed
-from ..config import settings
-from . import prompts
+from models import AnalysisResult, ErrorCode, ChordProgressionOutput, KeyOutput, BpmOutput, GenreOutput
+from exceptions import AnalysisFailedException, GenerationFailedException, VertexAIAPIErrorException # Changed
+from config import settings
+from services import prompts
 
 logger = logging.getLogger(__name__)
 
@@ -332,7 +332,7 @@ async def run_audio_analysis_workflow(gcs_file_path: str) -> AudioAnalysisWorkfl
     try:
         config = {"recursion_limit": 15, "configurable": {"workflow_run_id": workflow_run_id}}
         invoked_state = await app_graph.ainvoke(initial_state, config=config)
-        if isinstance(invoked_state, AudioAnalysisWorkflowState):
+        if isinstance(invoked_state, dict):
             final_state = invoked_state
         else:
             logger.warning(f"app_graph.ainvoke returned an unexpected type: {type(invoked_state)}. Using initial state as fallback.")

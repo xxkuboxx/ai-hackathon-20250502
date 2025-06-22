@@ -8,7 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from google.cloud import storage
 from google.auth.exceptions import DefaultCredentialsError
 
-from ..exceptions import GCSUploadErrorException
+from exceptions import GCSUploadErrorException
 
 logger = logging.getLogger(__name__)
 

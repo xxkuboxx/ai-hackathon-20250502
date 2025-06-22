@@ -1,7 +1,7 @@
 # exceptions.py
 
 from typing import Optional
-from .models import ErrorCode # Ensure relative import if models.py is in the same directory level
+from models import ErrorCode # Ensure relative import if models.py is in the same directory level
 
 class AppException(Exception):
     status_code: int = 500
