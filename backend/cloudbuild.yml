@@ -1,0 +1,33 @@
+steps:
+# Dockerイメージをビルド
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', '${_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_REPOSITORY}/sessionmuse-backend:$COMMIT_SHA', '.']
+  id: 'Build Docker image'
+
+# イメージをArtifact Registryにプッシュ
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', '${_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_REPOSITORY}/sessionmuse-backend:$COMMIT_SHA']
+  id: 'Push image to Artifact Registry'
+
+# Cloud Runにデプロイ
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: gcloud
+  args:
+    - 'run'
+    - 'deploy'
+    - 'sessionmuse-backend' # Cloud Runサービス名
+    - '--image=${_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_REPOSITORY}/sessionmuse-backend:$COMMIT_SHA'
+    - '--platform=managed'
+    - '--region=$_REGION' # Cloud Run サービスのリージョン (例: us-central1, asia-northeast1)
+    - '--allow-unauthenticated' # フロントエンドからの呼び出しを許可 (IDトークン認証はアプリ内で実施)
+    # サービスアカウントを指定する場合 (GCSやSecret Managerアクセス用)
+    # - '--service-account=$_SERVICE_ACCOUNT_EMAIL'
+    # 環境変数を設定 (GCSバケット名、Secret Managerのシークレット名など)
+    - '--update-env-vars=^##^GCS_UPLOAD_BUCKET=$_GCS_UPLOAD_BUCKET##GCS_TRACK_BUCKET=$_GCS_TRACK_BUCKET##GEMINI_API_KEY_SECRET_NAME=projects/$PROJECT_ID/secrets/$_GEMINI_KEY_NAME/versions/latest##LOG_LEVEL=INFO##ENABLE_AUTH_MIDDLEWARE=True##EXPECTED_AUDIENCE=$_EXPECTED_AUDIENCE'
+    # EXPECTED_AUDIENCEはデプロイ後に取得できるサービスのURLに置き換えるか、
+    # Cloud Runが自動的に設定するSERVICE_URL環境変数をconfig.pyで利用する
+    # `##` はCloud Buildでカンマ区切り環境変数を扱うための区切り文字
+  id: 'Deploy to Cloud Run'
+
+images:
+- '${_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REGISTRY_REPOSITORY}/sessionmuse-backend:$COMMIT_SHA'

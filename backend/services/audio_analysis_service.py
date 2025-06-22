@@ -21,11 +21,7 @@ logger = logging.getLogger(__name__)
 def get_vertex_llm(task_description: str, for_generation: bool = False) -> ChatVertexAI:
     """
     指定されたタスクのためのVertex AI LLMクライアントを取得します。
-    Vertex AIではAPIキーは通常ADC (Application Default Credentials) によって処理されます。
     """
-    if not settings.VERTEX_AI_PROJECT_ID:
-        logger.error(f"{task_description}: VERTEX_AI_PROJECT_IDが設定されていません。")
-        raise ExternalServiceErrorException(message="Vertex AI プロジェクトIDが設定されていません。", error_code=ErrorCode.EXTERNAL_SERVICE_ERROR)
 
     try:
         temperature = 0.7 if for_generation else 0.3
@@ -38,14 +34,13 @@ def get_vertex_llm(task_description: str, for_generation: bool = False) -> ChatV
         }
 
         llm = ChatVertexAI(
-            project=settings.VERTEX_AI_PROJECT_ID,
             location=settings.VERTEX_AI_LOCATION,
             model_name=settings.GEMINI_MODEL_NAME,
             temperature=temperature,
             request_timeout=settings.VERTEX_AI_TIMEOUT_SECONDS,
             safety_settings=safety_settings_vertex,
         )
-        logger.info(f"'{task_description}'用ChatVertexAIをモデル'{settings.GEMINI_MODEL_NAME}' (Project: {settings.VERTEX_AI_PROJECT_ID}, Location: {settings.VERTEX_AI_LOCATION})で初期化しました。")
+        logger.info(f"'{task_description}'用ChatVertexAIをモデル'{settings.GEMINI_MODEL_NAME}', Location: {settings.VERTEX_AI_LOCATION})で初期化しました。")
         return llm
     except Exception as e:
         logger.error(f"ChatVertexAIの初期化に失敗しました ('{task_description}'): {e}", exc_info=True)

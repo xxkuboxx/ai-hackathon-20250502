@@ -31,9 +31,6 @@ def get_vertex_llm_for_chat() -> ChatVertexAI:
     """
     チャット用のVertex AI LLMクライアントを取得します。
     """
-    if not settings.VERTEX_AI_PROJECT_ID:
-        logger.error(f"チャット用VERTEX_AI_PROJECT_IDが設定されていません。")
-        raise ExternalServiceErrorException(message="Vertex AI プロジェクトIDが設定されていません。", error_code=ErrorCode.EXTERNAL_SERVICE_ERROR)
 
     try:
         safety_settings_vertex = {
@@ -44,14 +41,13 @@ def get_vertex_llm_for_chat() -> ChatVertexAI:
         }
 
         llm = ChatVertexAI(
-            project=settings.VERTEX_AI_PROJECT_ID,
             location=settings.VERTEX_AI_LOCATION,
             model_name=settings.GEMINI_MODEL_NAME,
             temperature=0.7,
             request_timeout=settings.VERTEX_AI_TIMEOUT_SECONDS,
             safety_settings=safety_settings_vertex,
         )
-        logger.info(f"チャット用ChatVertexAIをモデル'{settings.GEMINI_MODEL_NAME}' (Project: {settings.VERTEX_AI_PROJECT_ID}, Location: {settings.VERTEX_AI_LOCATION})で初期化しました。")
+        logger.info(f"チャット用ChatVertexAIをモデル'{settings.GEMINI_MODEL_NAME}', Location: {settings.VERTEX_AI_LOCATION})で初期化しました。")
         return llm
     except Exception as e:
         logger.error(f"チャット用ChatVertexAIの初期化に失敗しました: {e}", exc_info=True)
