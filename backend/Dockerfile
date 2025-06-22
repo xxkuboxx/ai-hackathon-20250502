@@ -46,7 +46,4 @@ EXPOSE 8080
 # Uvicornを使用してアプリケーションを起動するコマンドを定義
 # Cloud RunはPORT環境変数を設定するので、Uvicornはそのポートでリッスンする必要がある
 # コンテナ外部からアクセスできるように0.0.0.0でリッスン
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "$PORT"]
-
-# Gunicornを使用する代替CMD (より堅牢なデプロイに推奨):
-# CMD ["gunicorn", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "main:app", "--bind", "0.0.0.0:$PORT"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -1,6 +1,6 @@
 resource "google_storage_bucket" "uploads_bucket" {
   name                        = "sessionmuse-uploads-${var.project_id}"
-  location                    = "asia-northeast1"
+  location                    = "us-east5"
   storage_class               = "STANDARD"
   uniform_bucket_level_access = true
 
@@ -22,7 +22,7 @@ resource "google_storage_bucket" "uploads_bucket" {
 
 resource "google_storage_bucket" "tracks_bucket" {
   name                        = "sessionmuse-tracks-${var.project_id}"
-  location                    = "asia-northeast1"
+  location                    = "us-east5"
   storage_class               = "STANDARD"
   uniform_bucket_level_access = true
 

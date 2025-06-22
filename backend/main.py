@@ -15,7 +15,6 @@ from logging_config import setup_app_logging
 from models import ErrorCode, ErrorDetail, ErrorResponse
 from exceptions import AppException
 from routers import process_api, chat_api
-from middleware.auth_middleware import IDTokenAuthMiddleware
 
 # --- 1. ロギング初期化 ---
 setup_app_logging(settings.LOG_LEVEL)
@@ -37,14 +36,7 @@ app.add_middleware(
     generator=lambda: uuid4().hex,
 )
 
-# 3.2. 認証ミドルウェア (Cloud Runサービス間認証)
-if settings.ENABLE_AUTH_MIDDLEWARE:
-    app.add_middleware(IDTokenAuthMiddleware)
-    logger.info("ID Token Authentication Middleware ENABLED.")
-else:
-    logger.warning("ID Token Authentication Middleware is DISABLED via configuration (ENABLE_AUTH_MIDDLEWARE=False).")
-
-# 3.3. カスタムロギングミドルウェア (詳細なリクエスト/レスポンスログ用)
+# 3.2. カスタムロギングミドルウェア (詳細なリクエスト/レスポンスログ用)
 @app.middleware("http")
 async def log_requests_middleware(request: Request, call_next):
     request_id = correlation_id.get()

@@ -1,0 +1,35 @@
+steps:
+# Dockerイメージをビルド
+- name: 'gcr.io/cloud-builders/docker'
+  args: [
+    'build',
+    '--cache-from', 'us-east5-docker.pkg.dev/$PROJECT_ID/sessionmuse-backend-repo/sessionmuse-backend:latest',
+    '-t', 'us-east5-docker.pkg.dev/$PROJECT_ID/sessionmuse-backend-repo/sessionmuse-backend', '.']
+  id: 'Build Docker image'
+
+# イメージをArtifact Registryにプッシュ
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'us-east5-docker.pkg.dev/$PROJECT_ID/sessionmuse-backend-repo/sessionmuse-backend']
+  id: 'Push image to Artifact Registry'
+
+# Cloud Runにデプロイ
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: gcloud
+  args:
+    - 'run'
+    - 'deploy'
+    - 'sessionmuse-backend' # Cloud Runサービス名
+    - '--image=us-east5-docker.pkg.dev/$PROJECT_ID/sessionmuse-backend-repo/sessionmuse-backend'
+    - '--platform=managed'
+    - '--region=us-east5'
+    # 環境変数を設定 (GCSバケット名など)
+    - '--update-env-vars=^##^GCS_UPLOAD_BUCKET=sessionmuse-uploads-ai-hackathon-20250502##GCS_TRACK_BUCKET=sessionmuse-tracks-ai-hackathon-20250502'
+    # リソースとスケーリング設定
+    - '--min-instances=0'    # 最小インスタンス数
+    - '--max-instances=1'    # 最大インスタンス数
+    - '--memory=512Mi'       # メモリ (256メガバイト)
+    - '--cpu=1'              # CPU (1 vCPU)
+    # 必要に応じて他の設定も追加できます
+    - '--timeout=300' # リクエストタイムアウト秒
+    - '--concurrency=80' # 1コンテナあたりの同時リクエスト数
+  id: 'Deploy to Cloud Run'

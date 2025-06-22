@@ -8,12 +8,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Union, List, Dict, Any, AsyncGenerator, Optional
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessageChunk
-from langchain_google_genai import ChatGoogleGenerativeAI, HarmBlockThreshold, HarmCategory
-import google.generativeai as genai
+from langchain_google_vertexai import ChatVertexAI, HarmCategory, HarmBlockThreshold
 
 from models import ChatRequest, ChatMessage, ErrorResponse, ErrorCode, AnalysisResult
 from config import settings
-from exceptions import GeminiAPIErrorException, InternalServerErrorException
+from exceptions import GeminiAPIErrorException, InternalServerErrorException, ExternalServiceErrorException
 
 logger = logging.getLogger(__name__)
 
@@ -28,34 +27,41 @@ SESSIONMUSE_CHAT_SYSTEM_PROMPT_TEXT = """
 ユーザーの音楽制作をサポートし、インスピレーションを与えるような、ポジティブで建設的なフィードバックを提供してください。
 """
 
-def get_gemini_llm_for_chat() -> ChatGoogleGenerativeAI:
-    if not settings.GEMINI_API_KEY_FINAL:
-        logger.error("チャット用GEMINI_API_KEY_FINALが設定されていません。")
-        raise GeminiAPIErrorException(message="Gemini APIキーが設定されていません。", error_code=ErrorCode.GEMINI_API_ERROR)
+def get_vertex_llm_for_chat() -> ChatVertexAI:
+    """
+    チャット用のVertex AI LLMクライアントを取得します。
+    """
+
     try:
-        llm = ChatGoogleGenerativeAI(
-            model=settings.GEMINI_MODEL_NAME,
-            google_api_key=settings.GEMINI_API_KEY_FINAL,
+        safety_settings_vertex = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        }
+
+        llm = ChatVertexAI(
+            location=settings.VERTEX_AI_LOCATION,
+            model_name=settings.GEMINI_MODEL_NAME,
             temperature=0.7,
-            request_timeout=settings.GEMINI_API_TIMEOUT_SECONDS,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            },
-            convert_system_message_to_human=True
+            request_timeout=settings.VERTEX_AI_TIMEOUT_SECONDS,
+            safety_settings=safety_settings_vertex,
         )
+        logger.info(f"チャット用ChatVertexAIをモデル'{settings.GEMINI_MODEL_NAME}', Location: {settings.VERTEX_AI_LOCATION})で初期化しました。")
         return llm
     except Exception as e:
-        logger.error(f"チャット用ChatGoogleGenerativeAIの初期化に失敗しました: {e}", exc_info=True)
-        raise GeminiAPIErrorException(message="チャット用Gemini LLMの初期化に失敗しました。", detail=str(e))
+        logger.error(f"チャット用ChatVertexAIの初期化に失敗しました: {e}", exc_info=True)
+        raise GeminiAPIErrorException(message="チャット用Vertex AI LLMの初期化に失敗しました。", detail=str(e), error_code=ErrorCode.GEMINI_API_ERROR)
 
-def build_gemini_chat_messages(
+
+def build_vertex_chat_messages(
     system_prompt: str,
     analysis_context: Optional[AnalysisResult],
     chat_history: List[ChatMessage]
 ) -> List[Union[SystemMessage, HumanMessage, AIMessage]]:
+    """
+    Vertex AIチャットモデル用のメッセージリストを構築します。
+    """
     messages: List[Union[SystemMessage, HumanMessage, AIMessage]] = []
     messages.append(SystemMessage(content=system_prompt))
     if analysis_context:
@@ -70,13 +76,16 @@ def build_gemini_chat_messages(
     for msg_data in chat_history:
         if msg_data.role == "user": messages.append(HumanMessage(content=msg_data.content))
         elif msg_data.role == "assistant": messages.append(AIMessage(content=msg_data.content))
-    logger.debug(f"{len(messages)}件のGeminiメッセージを構築しました。")
+    logger.debug(f"{len(messages)}件のVertex AIチャットメッセージを構築しました。")
     return messages
 
-async def stream_gemini_response_as_sse(
-    llm: ChatGoogleGenerativeAI,
+async def stream_vertex_response_as_sse(
+    llm: ChatVertexAI,
     messages: List[Union[SystemMessage, HumanMessage, AIMessage]]
 ) -> AsyncGenerator[str, None]:
+    """
+    Vertex AIからのストリーミングレスポンスをSSE (Server-Sent Events) 形式で非同期に生成します。
+    """
     full_response_content = ""
     try:
         async for chunk in llm.astream(messages):
@@ -88,23 +97,24 @@ async def stream_gemini_response_as_sse(
                 sse_chat_message = ChatMessage(role="assistant", content=str(content_piece))
                 yield f"data: {sse_chat_message.model_dump_json()}\n\n"
                 full_response_content += str(content_piece)
-        logger.info(f"Geminiレスポンスのストリーミングを終了しました。総長: {len(full_response_content)}")
-    except genai.types.generation_types.BlockedPromptException as bpe: # type: ignore
-        logger.warning(f"Gemini APIチャットストリームがブロックされました。理由: {bpe}")
-        error_message = ChatMessage(role="assistant", content=f"[エラー] あなたのリクエストはAIの安全フィルターによってブロックされました。詳細: {str(bpe)[:100]}")
-        yield f"data: {error_message.model_dump_json()}\n\n"
-    except asyncio.TimeoutError:
-        logger.error(f"Gemini APIストリーム呼び出しが {settings.GEMINI_API_TIMEOUT_SECONDS}秒後にタイムアウトしました。")
-        error_message = ChatMessage(role="assistant", content=f"[エラー] AIチャットリクエストが {settings.GEMINI_API_TIMEOUT_SECONDS}秒後にタイムアウトしました。")
-        yield f"data: {error_message.model_dump_json()}\n\n"
-    except GeminiAPIErrorException as e:
-        logger.error(f"ストリーム中のGeminiAPIErrorException: {e.message}")
-        error_message = ChatMessage(role="assistant", content=f"[エラー] AIサービスエラー: {e.message}")
-        yield f"data: {error_message.model_dump_json()}\n\n"
+        logger.info(f"Vertex AIレスポンスのストリーミングを終了しました。総長: {len(full_response_content)}")
     except Exception as e:
-        logger.error(f"チャット用Gemini APIストリーム中のエラー: {e}", exc_info=True)
-        error_message = ChatMessage(role="assistant", content="[エラー] AIとの通信中に予期せぬエラーが発生しました。")
-        yield f"data: {error_message.model_dump_json()}\n\n"
+        if "blocked" in str(e).lower() or "safety filter" in str(e).lower():
+            logger.warning(f"Vertex AI APIチャットストリームがブロックされた可能性があります。理由: {e}")
+            error_message = ChatMessage(role="assistant", content=f"[エラー] あなたのリクエストはAIの安全フィルターによってブロックされた可能性があります。詳細: {str(e)[:100]}")
+            yield f"data: {error_message.model_dump_json()}\n\n"
+        elif isinstance(e, asyncio.TimeoutError):
+            logger.error(f"Vertex AI APIストリーム呼び出しが {settings.VERTEX_AI_TIMEOUT_SECONDS}秒後にタイムアウトしました。")
+            error_message = ChatMessage(role="assistant", content=f"[エラー] AIチャットリクエストが {settings.VERTEX_AI_TIMEOUT_SECONDS}秒後にタイムアウトしました。")
+            yield f"data: {error_message.model_dump_json()}\n\n"
+        elif isinstance(e, GeminiAPIErrorException):
+            logger.error(f"ストリーム中のVertex AIサービスエラー: {e.message}")
+            error_message = ChatMessage(role="assistant", content=f"[エラー] AIサービスエラー: {e.message}")
+            yield f"data: {error_message.model_dump_json()}\n\n"
+        else:
+            logger.error(f"チャット用Vertex AI APIストリーム中のエラー: {e}", exc_info=True)
+            error_message = ChatMessage(role="assistant", content="[エラー] AIとの通信中に予期せぬエラーが発生しました。")
+            yield f"data: {error_message.model_dump_json()}\n\n"
 
 @router.post("/chat", response_model=ChatMessage)
 async def handle_chat_request(
@@ -113,44 +123,43 @@ async def handle_chat_request(
 ):
     logger.info(f"チャットリクエスト受信。メッセージ数: {len(chat_request.messages)}")
     try:
-        gemini_messages = build_gemini_chat_messages(
+        vertex_messages = build_vertex_chat_messages(
             system_prompt=SESSIONMUSE_CHAT_SYSTEM_PROMPT_TEXT,
             analysis_context=chat_request.analysis_context,
             chat_history=chat_request.messages
         )
     except Exception as e:
-        logger.error(f"Geminiチャットメッセージの構築エラー: {e}", exc_info=True)
+        logger.error(f"Vertex AIチャットメッセージの構築エラー: {e}", exc_info=True)
         raise InternalServerErrorException(message="AIプロンプトの構築に失敗しました。",detail=str(e))
 
     accept_header = request.headers.get("accept", "").lower()
     is_streaming_requested = "text/event-stream" in accept_header
 
     try:
-        llm = get_gemini_llm_for_chat()
+        llm = get_vertex_llm_for_chat()
         if is_streaming_requested:
-            logger.info("ストリーミングレスポンスが要求されました。Geminiストリームを開始します。")
+            logger.info("ストリーミングレスポンスが要求されました。Vertex AIストリームを開始します。")
             return StreamingResponse(
-                stream_gemini_response_as_sse(llm, gemini_messages),
+                stream_vertex_response_as_sse(llm, vertex_messages),
                 media_type="text/event-stream"
             )
         else:
-            logger.info("通常のJSONレスポンスが要求されました。Geminiを呼び出します。")
-            ai_response: AIMessage = await llm.ainvoke(gemini_messages)
+            logger.info("通常のJSONレスポンスが要求されました。Vertex AIを呼び出します。")
+            ai_response: AIMessage = await llm.ainvoke(vertex_messages)
             if not ai_response.content or not isinstance(ai_response.content, str):
-                logger.error(f"Gemini APIが空または無効なコンテンツを返しました: {ai_response.content}")
-                raise GeminiAPIErrorException(message="AIの応答が空か予期せぬ形式でした。")
+                logger.error(f"Vertex AI APIが空または無効なコンテンツを返しました: {ai_response.content}")
+                raise GeminiAPIErrorException(message="AIの応答が空か予期せぬ形式でした (Vertex AI)。")
             logger.info(f"AIからの非ストリーミング応答を受信: '{str(ai_response.content)[:100]}...'")
             return ChatMessage(role="assistant", content=ai_response.content)
-    except genai.types.generation_types.BlockedPromptException as bpe: # type: ignore
-        logger.warning(f"Gemini APIチャットリクエストがブロックされました (メインハンドラ)。理由: {bpe}", exc_info=True)
-        raise GeminiAPIErrorException(message="あなたのリクエストはAIの安全フィルターによってブロックされました。", detail=str(bpe), error_code=ErrorCode.GEMINI_API_ERROR)
-    except asyncio.TimeoutError:
-        logger.error(f"Gemini API呼び出しがタイムアウトしました (メインハンドラ)。", exc_info=True)
-        raise GeminiAPIErrorException(message=f"AIチャットリクエストがタイムアウトしました。", error_code=ErrorCode.GEMINI_API_ERROR)
-    except GeminiAPIErrorException:
-        raise
     except Exception as e:
-        logger.error(f"チャット用Gemini API呼び出し中のエラー (メインハンドラ): {e}", exc_info=True)
-        if "API key not valid" in str(e) or "PERMISSION_DENIED" in str(e):
-             raise GeminiAPIErrorException(message="Gemini APIキーが無効か、権限がありません。", detail=str(e), error_code=ErrorCode.GEMINI_API_ERROR)
-        raise GeminiAPIErrorException(message="AIとの通信中に予期せぬエラーが発生しました。", detail=str(e), error_code=ErrorCode.GEMINI_API_ERROR)
+        if "blocked" in str(e).lower() or "safety filter" in str(e).lower():
+            logger.warning(f"Vertex AI APIチャットリクエストがブロックされた可能性があります (メインハンドラ)。理由: {e}", exc_info=True)
+            raise GeminiAPIErrorException(message="あなたのリクエストはAIの安全フィルターによってブロックされた可能性があります (Vertex AI)。", detail=str(e), error_code=ErrorCode.GEMINI_API_ERROR)
+        elif isinstance(e, asyncio.TimeoutError):
+            logger.error(f"Vertex AI API呼び出しがタイムアウトしました (メインハンドラ)。", exc_info=True)
+            raise GeminiAPIErrorException(message=f"AIチャットリクエストがタイムアウトしました (Vertex AI)。", error_code=ErrorCode.GEMINI_API_ERROR)
+        elif isinstance(e, GeminiAPIErrorException):
+            raise
+        else:
+            logger.error(f"チャット用Vertex AI API呼び出し中のエラー (メインハンドラ): {e}", exc_info=True)
+            raise GeminiAPIErrorException(message="AIとの通信中に予期せぬエラーが発生しました (Vertex AI)。", detail=str(e), error_code=ErrorCode.GEMINI_API_ERROR)
