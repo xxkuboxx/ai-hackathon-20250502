@@ -14,7 +14,7 @@ class ErrorCode(str, Enum):
     GCS_UPLOAD_ERROR = "GCS_UPLOAD_ERROR"
     ANALYSIS_FAILED = "ANALYSIS_FAILED"
     GENERATION_FAILED = "GENERATION_FAILED"
-    GEMINI_API_ERROR = "GEMINI_API_ERROR"
+    VERTEX_AI_API_ERROR = "VERTEX_AI_API_ERROR" # Renamed from GEMINI_API_ERROR
     EXTERNAL_SERVICE_ERROR = "EXTERNAL_SERVICE_ERROR"
     INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR"
     AUTHENTICATION_REQUIRED = "AUTHENTICATION_REQUIRED"
@@ -45,9 +45,9 @@ class AnalysisResult(BaseModel):
 
 class ProcessResponse(BaseModel):
     analysis: AnalysisResult
-    backing_track_url: HttpUrl = Field(..., description="生成されたバッキングトラックの署名付きURL")
+    backing_track_url: HttpUrl = Field(..., description="生成されたバッキングトラックの公開URL") # Changed from "署名付きURL"
     original_file_url: Optional[HttpUrl] = Field(
-        None, description="アップロードされたオリジナルファイルの署名付きURL (確認用など)"
+        None, description="アップロードされたオリジナルファイルの公開URL (確認用など)" # Changed from "署名付きURL"
     )
 
 

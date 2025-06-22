@@ -1,7 +1,7 @@
 # exceptions.py
 
 from typing import Optional
-from models import ErrorCode
+from .models import ErrorCode # Ensure relative import if models.py is in the same directory level
 
 class AppException(Exception):
     status_code: int = 500
@@ -55,10 +55,10 @@ class GenerationFailedException(AppException):
     error_code = ErrorCode.GENERATION_FAILED
     message = "バッキングトラック生成プロセスに失敗しました。"
 
-class GeminiAPIErrorException(AppException):
+class VertexAIAPIErrorException(AppException): # Renamed from GeminiAPIErrorException
     status_code = 503
-    error_code = ErrorCode.GEMINI_API_ERROR
-    message = "Gemini APIとの通信中にエラーが発生しました。"
+    error_code = ErrorCode.VERTEX_AI_API_ERROR # Changed to VERTEX_AI_API_ERROR
+    message = "Vertex AI APIとの通信中にエラーが発生しました。" # Updated message
 
 class ExternalServiceErrorException(AppException):
     status_code = 503
