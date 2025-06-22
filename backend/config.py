@@ -35,20 +35,4 @@ class Settings(BaseSettings):
     PORT_LOCAL_DEV: int = Field(8000, description="ローカルUvicorn開発サーバー用ポート")
 
 
-    # 認証設定
-    ENABLE_AUTH_MIDDLEWARE: bool = Field(True, description="IDトークン認証ミドルウェアを有効にするか。ローカル開発ではFalseに設定。")
-    EXPECTED_AUDIENCE: Optional[str] = Field(
-        default=None,
-        description="IDトークンの期待されるオーディエンス (このバックエンドCloud RunサービスのURL)"
-    )
-
-    @model_validator(mode='after')
-    def _resolve_settings(self) -> 'Settings':
-        # EXPECTED_AUDIENCEの解決 (Cloud Run環境で設定されていない場合)
-        if not self.EXPECTED_AUDIENCE and os.environ.get("SERVICE_URL"):
-            self.EXPECTED_AUDIENCE = os.environ.get("SERVICE_URL")
-        elif not self.EXPECTED_AUDIENCE and os.environ.get("K_SERVICE") and self.ENABLE_AUTH_MIDDLEWARE:
-             print(f"警告: EXPECTED_AUDIENCEが設定されていません。K_SERVICEは '{os.environ.get('K_SERVICE')}' ですが、完全なURLが推奨されます。認証が失敗する可能性があります。")
-        return self
-
 settings = Settings()

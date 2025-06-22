@@ -7,7 +7,7 @@
 
 resource "google_artifact_registry_repository" "backend_repo" {
   project       = var.project_id
-  location      = "us-east5" # リージョン: us-east5
+  location      = "us-east5"
   repository_id = "sessionmuse-backend-repo" # リポジトリID (プロジェクト内で一意)
   description   = "SessionMUSEバックエンドアプリケーションのDockerイメージリポジトリ"
   format        = "DOCKER" # フォーマット: Dockerイメージ
