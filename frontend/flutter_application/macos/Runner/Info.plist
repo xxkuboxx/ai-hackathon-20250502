@@ -28,5 +28,7 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>マイクを使用して音声を録音し、音楽解析機能を提供するためにマイクアクセスが必要です。</string>
 </dict>
 </plist>
