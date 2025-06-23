@@ -102,7 +102,7 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  String? _mp3FilePath;
+  String? _audioFilePath;
   final RecorderController _recorderController = RecorderController();
   final PlayerController playerController = PlayerController();
   final TextEditingController _messageController = TextEditingController();
@@ -180,7 +180,11 @@ class _MyHomePageState extends State<MyHomePage> {
       print('録音開始: $outputPath');
 
       // RecorderControllerで録音開始
-      await _recorderController.record(path: outputPath);
+      await _recorderController.record(
+        androidEncoder: AndroidEncoder.aac,
+        androidOutputFormat: AndroidOutputFormat.mpeg4,
+        path: outputPath,
+      );
 
       print('録音が開始されました');
       return outputPath;
@@ -191,16 +195,16 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _uploadAndAnalyze() async {
-    if (_mp3FilePath == null) {
+    if (_audioFilePath == null) {
       print('音声ファイルが存在しません');
       return;
     }
 
-    print('API upload started: $_mp3FilePath');
+    print('API upload started: $_audioFilePath');
 
     try {
       final result = await AudioProcessingService.uploadAndProcess(
-        _mp3FilePath!,
+        _audioFilePath!,
       );
 
       if (result != null) {
@@ -250,17 +254,17 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _togglePlayback() async {
-    if (_mp3FilePath == null) {
+    if (_audioFilePath == null) {
       print('音声ファイルパスがnullです');
       return;
     }
 
-    print('音声ファイルパス: $_mp3FilePath');
+    print('音声ファイルパス: $_audioFilePath');
 
     // ファイルの存在確認
-    final file = File(_mp3FilePath!);
+    final file = File(_audioFilePath!);
     if (!await file.exists()) {
-      print('音声ファイルが存在しません: $_mp3FilePath');
+      print('音声ファイルが存在しません: $_audioFilePath');
       if (mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -298,7 +302,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
         // プレイヤーを準備
         await playerController.preparePlayer(
-          path: _mp3FilePath!,
+          path: _audioFilePath!,
           shouldExtractWaveform: true,
         );
         print('プレイヤーの準備が完了しました');
@@ -306,7 +310,7 @@ class _MyHomePageState extends State<MyHomePage> {
         // リスナーを一度だけ追加
         if (!_playerListenerAdded) {
           playerController.onPlayerStateChanged.listen((state) {
-            print('プレイヤー状態変更: ${state.toString()}');
+            print('プレイヤー状態変更: \\${state.toString()}');
             if (state.isPaused || state.isStopped) {
               if (mounted) {
                 setState(() {
@@ -472,7 +476,7 @@ class _MyHomePageState extends State<MyHomePage> {
                             final recordingPath = await _setupRecording();
                             if (recordingPath != null) {
                               setState(() {
-                                _mp3FilePath = recordingPath;
+                                _audioFilePath = recordingPath;
                               });
                             }
                           } else {
@@ -480,13 +484,12 @@ class _MyHomePageState extends State<MyHomePage> {
                               _recordingState = RecordingState.uploading;
                             });
                             print('録音停止中...');
-                            final recordedFilePath = await _recorderController
-                                .stop();
+                            final recordedFilePath = await _recorderController.stop();
                             print('録音停止結果: $recordedFilePath');
 
                             if (recordedFilePath != null) {
                               setState(() {
-                                _mp3FilePath = recordedFilePath;
+                                _audioFilePath = recordedFilePath;
                               });
                               print('録音完了: $recordedFilePath');
 
@@ -687,7 +690,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   borderRadius: BorderRadius.circular(8.0),
                   border: Border.all(color: Colors.grey.shade300, width: 1.0),
                 ),
-                child: _mp3FilePath != null
+                child: _audioFilePath != null
                     ? AudioFileWaveforms(
                         playerController: playerController,
                         size: Size(MediaQuery.of(context).size.width - 80, 60),
@@ -710,13 +713,13 @@ class _MyHomePageState extends State<MyHomePage> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   IconButton(
-                    onPressed: _mp3FilePath != null ? _togglePlayback : null,
+                    onPressed: _audioFilePath != null ? _togglePlayback : null,
                     icon: Icon(
                       _isPlaying ? Icons.stop : Icons.play_arrow,
                       color: Colors.white,
                     ),
                     style: IconButton.styleFrom(
-                      backgroundColor: _mp3FilePath != null
+                      backgroundColor: _audioFilePath != null
                           ? (_isPlaying ? Colors.red : Colors.green)
                           : Colors.grey,
                       padding: const EdgeInsets.all(12),
@@ -724,13 +727,13 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                   const SizedBox(width: 16),
                   IconButton(
-                    onPressed: _mp3FilePath != null
+                    onPressed: _audioFilePath != null
                         ? () {
                             if (mounted && context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
-                                    '音声ファイルが保存されました: ${_mp3FilePath!.split('/').last}',
+                                    '音声ファイルが保存されました: \\${_audioFilePath!.split('/').last}',
                                   ),
                                   duration: const Duration(seconds: 3),
                                 ),
@@ -740,7 +743,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         : null,
                     icon: const Icon(Icons.download, color: Colors.blue),
                     style: IconButton.styleFrom(
-                      backgroundColor: _mp3FilePath != null
+                      backgroundColor: _audioFilePath != null
                           ? Colors.blue.shade50
                           : Colors.grey.shade200,
                       padding: const EdgeInsets.all(12),
