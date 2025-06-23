@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 // 録音状態を管理するenum
 enum RecordingState {
@@ -1013,14 +1014,38 @@ class _MyHomePageState extends State<MyHomePage> {
                               width: 1.0,
                             ),
                           ),
-                          child: Text(
-                            message.text,
-                            style: TextStyle(
-                              color: message.isUser
-                                  ? Colors.white
-                                  : Colors.black87,
-                            ),
-                          ),
+                          child: message.isUser
+                              ? Text(
+                                  message.text,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : MarkdownBody(
+                                  data: message.text,
+                                  styleSheet: MarkdownStyleSheet(
+                                    p: const TextStyle(
+                                      color: Colors.black87,
+                                      fontSize: 14,
+                                    ),
+                                    strong: const TextStyle(
+                                      color: Colors.black87,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    em: const TextStyle(
+                                      color: Colors.black87,
+                                      fontSize: 14,
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                    code: TextStyle(
+                                      backgroundColor: Colors.grey.shade200,
+                                      color: Colors.purple.shade700,
+                                      fontSize: 13,
+                                      fontFamily: 'monospace',
+                                    ),
+                                  ),
+                                ),
                         ),
                       ),
                       if (message.isUser) ...[
