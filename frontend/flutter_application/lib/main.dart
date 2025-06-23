@@ -377,492 +377,11 @@ class _MyHomePageState extends State<MyHomePage> {
                     padding: const EdgeInsets.all(16.0),
                     child: Column(
                       children: [
-                        // 録音/停止セクション
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(20.0),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(8.0),
-                            border: Border.all(
-                              color: Colors.blue.shade300,
-                              width: 1.0,
-                            ),
-                          ),
-                          child: Column(
-                            children: [
-                              Row(
-                                children: [
-                                  const Icon(
-                                    Icons.music_note,
-                                    color: Colors.blue,
-                                    size: 18,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  const Text(
-                                    '録音',
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.blue,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 50,
-                                    height: 50,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color:
-                                          _recordingState ==
-                                              RecordingState.recording
-                                          ? Colors.red.shade100
-                                          : Colors.blue.shade100,
-                                      border: Border.all(
-                                        color:
-                                            _recordingState ==
-                                                RecordingState.recording
-                                            ? Colors.red.shade300
-                                            : Colors.blue.shade300,
-                                        width: 1.5,
-                                      ),
-                                    ),
-                                    child: IconButton(
-                                      icon: Icon(
-                                        _recordingState ==
-                                                RecordingState.recording
-                                            ? Icons.stop
-                                            : Icons.mic,
-                                        size: 20,
-                                        color:
-                                            _recordingState ==
-                                                RecordingState.uploading
-                                            ? Colors
-                                                  .grey // 送信中はグレー
-                                            : (_recordingState ==
-                                                      RecordingState.recording
-                                                  ? Colors.red
-                                                  : Colors.blue),
-                                      ),
-                                      onPressed:
-                                          _recordingState ==
-                                              RecordingState.uploading
-                                          ? null
-                                          : () async {
-                                              if (_recordingState ==
-                                                  RecordingState.idle) {
-                                                // 録音開始
-                                                setState(() {
-                                                  _recordingState =
-                                                      RecordingState.recording;
-                                                  _isAnalyzed = true;
-                                                });
-                                                final recordingPath =
-                                                    await _setupRecording();
-                                                if (recordingPath != null) {
-                                                  setState(() {
-                                                    _mp3FilePath =
-                                                        recordingPath;
-                                                  });
-                                                }
-                                              } else {
-                                                // 録音停止
-                                                setState(() {
-                                                  _recordingState =
-                                                      RecordingState.uploading;
-                                                });
-                                                print('録音停止中...');
-                                                final recordedFilePath =
-                                                    await _recorderController
-                                                        .stop();
-                                                print(
-                                                  '録音停止結果: $recordedFilePath',
-                                                );
-
-                                                if (recordedFilePath != null) {
-                                                  setState(() {
-                                                    _mp3FilePath =
-                                                        recordedFilePath;
-                                                  });
-                                                  print(
-                                                    '録音完了: $recordedFilePath',
-                                                  );
-
-                                                  // ファイルの存在確認
-                                                  final file = File(
-                                                    recordedFilePath,
-                                                  );
-                                                  if (await file.exists()) {
-                                                    final fileSize = await file
-                                                        .length();
-                                                    print(
-                                                      '録音ファイルサイズ: $fileSize bytes',
-                                                    );
-                                                  } else {
-                                                    print('録音ファイルが存在しません!');
-                                                  }
-
-                                                  // APIにアップロードして解析
-                                                  await _uploadAndAnalyze();
-                                                } else {
-                                                  print(
-                                                    'recordedFilePath is null!',
-                                                  );
-                                                  setState(() {
-                                                    _recordingState =
-                                                        RecordingState.idle;
-                                                  });
-                                                }
-                                                setState(() {
-                                                  _isAnalyzed = true;
-                                                });
-                                              }
-                                            },
-                                      style: IconButton.styleFrom(
-                                        backgroundColor:
-                                            _recordingState ==
-                                                RecordingState.uploading
-                                            ? Colors.grey.shade200
-                                            : (_recordingState ==
-                                                      RecordingState.recording
-                                                  ? Colors.red.shade100
-                                                  : Colors.blue.shade100),
-                                        side: BorderSide(
-                                          color:
-                                              _recordingState ==
-                                                  RecordingState.uploading
-                                              ? Colors.grey
-                                              : (_recordingState ==
-                                                        RecordingState.recording
-                                                    ? Colors.red.shade300
-                                                    : Colors.blue.shade300),
-                                          width: 1.5,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    _recordingState == RecordingState.recording
-                                        ? '録音中'
-                                        : '録音開始',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color:
-                                          _recordingState ==
-                                              RecordingState.recording
-                                          ? Colors.red
-                                          : Colors.grey,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-                              // 録音波形表示
-                              Container(
-                                height: 60,
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade100,
-                                  borderRadius: BorderRadius.circular(8.0),
-                                  border: Border.all(
-                                    color: Colors.grey.shade300,
-                                    width: 1.0,
-                                  ),
-                                ),
-                                child:
-                                    _recordingState == RecordingState.recording
-                                    ? AudioWaveforms(
-                                        recorderController: _recorderController,
-                                        size: Size(
-                                          MediaQuery.of(context).size.width -
-                                              80,
-                                          60,
-                                        ),
-                                        waveStyle: const WaveStyle(
-                                          waveCap: StrokeCap.round,
-                                          extendWaveform: true,
-                                          showMiddleLine: false,
-                                        ),
-                                      )
-                                    : _recordingState ==
-                                          RecordingState.uploading
-                                    ? const Center(
-                                        child: Column(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            Icon(
-                                              Icons.cloud_upload,
-                                              color: Colors.blue,
-                                              size: 24,
-                                            ),
-                                            SizedBox(height: 8),
-                                            Text(
-                                              '音声解析中...',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w500,
-                                                color: Colors.blue,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      )
-                                    : (_recordingState == RecordingState.idle)
-                                    ? const Center(
-                                        child: Text(
-                                          '録音を開始すると波形が表示されます',
-                                          style: TextStyle(
-                                            color: Colors.grey,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      )
-                                    : _recordedWaveformData.isNotEmpty
-                                    ? AudioFileWaveforms(
-                                        playerController: playerController,
-                                        size: Size(
-                                          MediaQuery.of(context).size.width -
-                                              80,
-                                          60,
-                                        ),
-                                        waveformData: _recordedWaveformData,
-                                        playerWaveStyle: const PlayerWaveStyle(
-                                          seekLineColor: Colors.blue,
-                                          showSeekLine: true,
-                                          waveCap: StrokeCap.round,
-                                        ),
-                                        waveformType: WaveformType.fitWidth,
-                                      )
-                                    : const Center(
-                                        child: Text(
-                                          '録音を開始すると波形が表示されます',
-                                          style: TextStyle(
-                                            color: Colors.grey,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
-                              ),
-                              const SizedBox(height: 16),
-                            ],
-                          ),
-                        ),
-
+                        _buildRecordingSection(),
                         const SizedBox(height: 16),
-
-                        // 解析結果
-                        if (_isAnalyzed)
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(20.0),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12.0),
-                              border: Border.all(
-                                color: Colors.green.shade300,
-                                width: 2.0,
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.analytics,
-                                      color: Colors.green,
-                                      size: 24,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    const Text(
-                                      'AIによる解析結果',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.green,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 16),
-                                _buildAnalysisRow(
-                                  'Key',
-                                  _analysisResult?.key ?? 'C Major',
-                                ),
-                                _buildAnalysisRow(
-                                  'BPM',
-                                  _analysisResult?.bpm.toString() ?? '120',
-                                ),
-                                _buildAnalysisRow(
-                                  'Chords',
-                                  _analysisResult?.chords ?? 'C | G | Am | F',
-                                ),
-                                _buildAnalysisRow(
-                                  'Genre by AI',
-                                  _analysisResult?.genre ?? 'Rock',
-                                ),
-                              ],
-                            ),
-                          ),
-
+                        _buildAnalysisResults(),
                         if (_isAnalyzed) const SizedBox(height: 16),
-
-                        // バッキングトラック
-                        if (_isAnalyzed)
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(20.0),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12.0),
-                              border: Border.all(
-                                color: Colors.orange.shade300,
-                                width: 2.0,
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.headphones,
-                                      color: Colors.orange,
-                                      size: 24,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    const Text(
-                                      'AIにより自動で生成された伴奏',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.orange,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 16),
-                                Column(
-                                  children: [
-                                    // 波形表示
-                                    Container(
-                                      height: 60,
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey.shade100,
-                                        borderRadius: BorderRadius.circular(
-                                          8.0,
-                                        ),
-                                        border: Border.all(
-                                          color: Colors.grey.shade300,
-                                          width: 1.0,
-                                        ),
-                                      ),
-                                      child: _mp3FilePath != null
-                                          ? AudioFileWaveforms(
-                                              playerController:
-                                                  playerController,
-                                              size: Size(
-                                                MediaQuery.of(
-                                                      context,
-                                                    ).size.width -
-                                                    80,
-                                                60,
-                                              ),
-                                              playerWaveStyle:
-                                                  const PlayerWaveStyle(
-                                                    seekLineColor:
-                                                        Colors.orange,
-                                                    showSeekLine: true,
-                                                    waveCap: StrokeCap.round,
-                                                  ),
-                                              waveformType:
-                                                  WaveformType.fitWidth,
-                                            )
-                                          : const Center(
-                                              child: Text(
-                                                '録音完了後に波形が表示されます',
-                                                style: TextStyle(
-                                                  color: Colors.grey,
-                                                  fontSize: 12,
-                                                ),
-                                              ),
-                                            ),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        // Play/Stop ボタン
-                                        IconButton(
-                                          onPressed: _mp3FilePath != null
-                                              ? _togglePlayback
-                                              : null,
-                                          icon: Icon(
-                                            _isPlaying
-                                                ? Icons.stop
-                                                : Icons.play_arrow,
-                                            color: Colors.white,
-                                          ),
-                                          style: IconButton.styleFrom(
-                                            backgroundColor:
-                                                _mp3FilePath != null
-                                                ? (_isPlaying
-                                                      ? Colors.red
-                                                      : Colors.green)
-                                                : Colors.grey,
-                                            padding: const EdgeInsets.all(12),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 16),
-
-                                        // Download ボタン
-                                        IconButton(
-                                          onPressed: _mp3FilePath != null
-                                              ? () {
-                                                  if (mounted &&
-                                                      context.mounted) {
-                                                    ScaffoldMessenger.of(
-                                                      context,
-                                                    ).showSnackBar(
-                                                      SnackBar(
-                                                        content: Text(
-                                                          '音声ファイルが保存されました: ${_mp3FilePath!.split('/').last}',
-                                                        ),
-                                                        duration:
-                                                            const Duration(
-                                                              seconds: 3,
-                                                            ),
-                                                      ),
-                                                    );
-                                                  }
-                                                }
-                                              : null,
-                                          icon: const Icon(
-                                            Icons.download,
-                                            color: Colors.blue,
-                                          ),
-                                          style: IconButton.styleFrom(
-                                            backgroundColor:
-                                                _mp3FilePath != null
-                                                ? Colors.blue.shade50
-                                                : Colors.grey.shade200,
-                                            padding: const EdgeInsets.all(12),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
+                        _buildBackingTrackPlayer(),
                       ],
                     ),
                   ),
@@ -871,161 +390,7 @@ class _MyHomePageState extends State<MyHomePage> {
             ],
           ),
 
-          // 全画面チャット画面
-          if (_isChatOpen)
-            Container(
-              color: Colors.purple.shade50,
-              child: Column(
-                children: [
-                  // チャットヘッダー
-                  Container(
-                    padding: const EdgeInsets.all(16.0),
-                    decoration: BoxDecoration(
-                      color: Colors.purple.shade100,
-                      border: Border(
-                        bottom: BorderSide(
-                          color: Colors.grey.shade300,
-                          width: 1.0,
-                        ),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        IconButton(
-                          onPressed: _toggleChat,
-                          icon: const Icon(Icons.close, color: Colors.purple),
-                        ),
-                        const SizedBox(width: 8),
-                        const Icon(
-                          Icons.chat_bubble,
-                          color: Colors.purple,
-                          size: 24,
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'AI チャット',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.purple,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // メッセージリスト
-                  Expanded(
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.all(16.0),
-                      itemCount: _messages.length,
-                      itemBuilder: (context, index) {
-                        final message = _messages[index];
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 12.0),
-                          child: Row(
-                            mainAxisAlignment: message.isUser
-                                ? MainAxisAlignment.end
-                                : MainAxisAlignment.start,
-                            children: [
-                              if (!message.isUser) ...[
-                                CircleAvatar(
-                                  backgroundColor: Colors.purple.shade200,
-                                  child: const Icon(
-                                    Icons.smart_toy,
-                                    color: Colors.purple,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                              ],
-                              Flexible(
-                                child: Container(
-                                  padding: const EdgeInsets.all(12.0),
-                                  decoration: BoxDecoration(
-                                    color: message.isUser
-                                        ? Colors.purple.shade200
-                                        : Colors.white,
-                                    borderRadius: BorderRadius.circular(16.0),
-                                    border: Border.all(
-                                      color: Colors.grey.shade300,
-                                      width: 1.0,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    message.text,
-                                    style: TextStyle(
-                                      color: message.isUser
-                                          ? Colors.white
-                                          : Colors.black87,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              if (message.isUser) ...[
-                                const SizedBox(width: 8),
-                                CircleAvatar(
-                                  backgroundColor: Colors.purple.shade400,
-                                  child: const Icon(
-                                    Icons.person,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-
-                  // メッセージ入力エリア
-                  Container(
-                    padding: const EdgeInsets.all(16.0),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      border: Border(
-                        top: BorderSide(
-                          color: Colors.grey.shade300,
-                          width: 1.0,
-                        ),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _messageController,
-                            decoration: const InputDecoration(
-                              hintText: 'メッセージを入力...',
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.all(
-                                  Radius.circular(24.0),
-                                ),
-                              ),
-                              contentPadding: EdgeInsets.symmetric(
-                                horizontal: 16.0,
-                                vertical: 12.0,
-                              ),
-                            ),
-                            onSubmitted: (_) => _sendMessage(),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          onPressed: _sendMessage,
-                          icon: const Icon(Icons.send),
-                          color: Colors.purple,
-                          style: IconButton.styleFrom(
-                            backgroundColor: Colors.purple.shade100,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          _buildChatOverlay(),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -1038,6 +403,493 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+    );
+  }
+
+  Widget _buildRecordingSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8.0),
+        border: Border.all(color: Colors.blue.shade300, width: 1.0),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.music_note, color: Colors.blue, size: 18),
+              const SizedBox(width: 8),
+              const Text(
+                '録音',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _recordingState == RecordingState.recording
+                      ? Colors.red.shade100
+                      : Colors.blue.shade100,
+                  border: Border.all(
+                    color: _recordingState == RecordingState.recording
+                        ? Colors.red.shade300
+                        : Colors.blue.shade300,
+                    width: 1.5,
+                  ),
+                ),
+                child: IconButton(
+                  icon: Icon(
+                    _recordingState == RecordingState.recording
+                        ? Icons.stop
+                        : Icons.mic,
+                    size: 20,
+                    color: _recordingState == RecordingState.uploading
+                        ? Colors.grey
+                        : (_recordingState == RecordingState.recording
+                              ? Colors.red
+                              : Colors.blue),
+                  ),
+                  onPressed: _recordingState == RecordingState.uploading
+                      ? null
+                      : () async {
+                          if (_recordingState == RecordingState.idle) {
+                            setState(() {
+                              _recordingState = RecordingState.recording;
+                              _isAnalyzed = true;
+                            });
+                            final recordingPath = await _setupRecording();
+                            if (recordingPath != null) {
+                              setState(() {
+                                _mp3FilePath = recordingPath;
+                              });
+                            }
+                          } else {
+                            setState(() {
+                              _recordingState = RecordingState.uploading;
+                            });
+                            print('録音停止中...');
+                            final recordedFilePath = await _recorderController
+                                .stop();
+                            print('録音停止結果: $recordedFilePath');
+
+                            if (recordedFilePath != null) {
+                              setState(() {
+                                _mp3FilePath = recordedFilePath;
+                              });
+                              print('録音完了: $recordedFilePath');
+
+                              final file = File(recordedFilePath);
+                              if (await file.exists()) {
+                                final fileSize = await file.length();
+                                print('録音ファイルサイズ: $fileSize bytes');
+                              } else {
+                                print('録音ファイルが存在しません!');
+                              }
+
+                              await _uploadAndAnalyze();
+                            } else {
+                              print('recordedFilePath is null!');
+                              setState(() {
+                                _recordingState = RecordingState.idle;
+                              });
+                            }
+                            setState(() {
+                              _isAnalyzed = true;
+                            });
+                          }
+                        },
+                  style: IconButton.styleFrom(
+                    backgroundColor: _recordingState == RecordingState.uploading
+                        ? Colors.grey.shade200
+                        : (_recordingState == RecordingState.recording
+                              ? Colors.red.shade100
+                              : Colors.blue.shade100),
+                    side: BorderSide(
+                      color: _recordingState == RecordingState.uploading
+                          ? Colors.grey
+                          : (_recordingState == RecordingState.recording
+                                ? Colors.red.shade300
+                                : Colors.blue.shade300),
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _recordingState == RecordingState.recording ? '録音中' : '録音開始',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _recordingState == RecordingState.recording
+                      ? Colors.red
+                      : Colors.grey,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            height: 60,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(8.0),
+              border: Border.all(color: Colors.grey.shade300, width: 1.0),
+            ),
+            child: _recordingState == RecordingState.recording
+                ? AudioWaveforms(
+                    recorderController: _recorderController,
+                    size: Size(MediaQuery.of(context).size.width - 80, 60),
+                    waveStyle: const WaveStyle(
+                      waveCap: StrokeCap.round,
+                      extendWaveform: true,
+                      showMiddleLine: false,
+                    ),
+                  )
+                : _recordingState == RecordingState.uploading
+                ? const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.cloud_upload, color: Colors.blue, size: 24),
+                        SizedBox(height: 8),
+                        Text(
+                          '音声解析中...',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.blue,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : (_recordingState == RecordingState.idle)
+                ? const Center(
+                    child: Text(
+                      '録音を開始すると波形が表示されます',
+                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  )
+                : _recordedWaveformData.isNotEmpty
+                ? AudioFileWaveforms(
+                    playerController: playerController,
+                    size: Size(MediaQuery.of(context).size.width - 80, 60),
+                    waveformData: _recordedWaveformData,
+                    playerWaveStyle: const PlayerWaveStyle(
+                      seekLineColor: Colors.blue,
+                      showSeekLine: true,
+                      waveCap: StrokeCap.round,
+                    ),
+                    waveformType: WaveformType.fitWidth,
+                  )
+                : const Center(
+                    child: Text(
+                      '録音を開始すると波形が表示されます',
+                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ),
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAnalysisResults() {
+    if (!_isAnalyzed) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12.0),
+        border: Border.all(color: Colors.green.shade300, width: 2.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.analytics, color: Colors.green, size: 24),
+              const SizedBox(width: 8),
+              const Text(
+                'AIによる解析結果',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.green,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildAnalysisRow('Key', _analysisResult?.key ?? 'C Major'),
+          _buildAnalysisRow('BPM', _analysisResult?.bpm.toString() ?? '120'),
+          _buildAnalysisRow(
+            'Chords',
+            _analysisResult?.chords ?? 'C | G | Am | F',
+          ),
+          _buildAnalysisRow('Genre by AI', _analysisResult?.genre ?? 'Rock'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBackingTrackPlayer() {
+    if (!_isAnalyzed) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12.0),
+        border: Border.all(color: Colors.orange.shade300, width: 2.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.headphones, color: Colors.orange, size: 24),
+              const SizedBox(width: 8),
+              const Text(
+                'AIにより自動で生成された伴奏',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orange,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Column(
+            children: [
+              Container(
+                height: 60,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8.0),
+                  border: Border.all(color: Colors.grey.shade300, width: 1.0),
+                ),
+                child: _mp3FilePath != null
+                    ? AudioFileWaveforms(
+                        playerController: playerController,
+                        size: Size(MediaQuery.of(context).size.width - 80, 60),
+                        playerWaveStyle: const PlayerWaveStyle(
+                          seekLineColor: Colors.orange,
+                          showSeekLine: true,
+                          waveCap: StrokeCap.round,
+                        ),
+                        waveformType: WaveformType.fitWidth,
+                      )
+                    : const Center(
+                        child: Text(
+                          '録音完了後に波形が表示されます',
+                          style: TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                      ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    onPressed: _mp3FilePath != null ? _togglePlayback : null,
+                    icon: Icon(
+                      _isPlaying ? Icons.stop : Icons.play_arrow,
+                      color: Colors.white,
+                    ),
+                    style: IconButton.styleFrom(
+                      backgroundColor: _mp3FilePath != null
+                          ? (_isPlaying ? Colors.red : Colors.green)
+                          : Colors.grey,
+                      padding: const EdgeInsets.all(12),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  IconButton(
+                    onPressed: _mp3FilePath != null
+                        ? () {
+                            if (mounted && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    '音声ファイルが保存されました: ${_mp3FilePath!.split('/').last}',
+                                  ),
+                                  duration: const Duration(seconds: 3),
+                                ),
+                              );
+                            }
+                          }
+                        : null,
+                    icon: const Icon(Icons.download, color: Colors.blue),
+                    style: IconButton.styleFrom(
+                      backgroundColor: _mp3FilePath != null
+                          ? Colors.blue.shade50
+                          : Colors.grey.shade200,
+                      padding: const EdgeInsets.all(12),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChatOverlay() {
+    if (!_isChatOpen) return const SizedBox.shrink();
+
+    return Container(
+      color: Colors.purple.shade50,
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: Colors.purple.shade100,
+              border: Border(
+                bottom: BorderSide(color: Colors.grey.shade300, width: 1.0),
+              ),
+            ),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: _toggleChat,
+                  icon: const Icon(Icons.close, color: Colors.purple),
+                ),
+                const SizedBox(width: 8),
+                const Icon(Icons.chat_bubble, color: Colors.purple, size: 24),
+                const SizedBox(width: 8),
+                const Text(
+                  'AI チャット',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.purple,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.all(16.0),
+              itemCount: _messages.length,
+              itemBuilder: (context, index) {
+                final message = _messages[index];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12.0),
+                  child: Row(
+                    mainAxisAlignment: message.isUser
+                        ? MainAxisAlignment.end
+                        : MainAxisAlignment.start,
+                    children: [
+                      if (!message.isUser) ...[
+                        CircleAvatar(
+                          backgroundColor: Colors.purple.shade200,
+                          child: const Icon(
+                            Icons.smart_toy,
+                            color: Colors.purple,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.all(12.0),
+                          decoration: BoxDecoration(
+                            color: message.isUser
+                                ? Colors.purple.shade200
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(16.0),
+                            border: Border.all(
+                              color: Colors.grey.shade300,
+                              width: 1.0,
+                            ),
+                          ),
+                          child: Text(
+                            message.text,
+                            style: TextStyle(
+                              color: message.isUser
+                                  ? Colors.white
+                                  : Colors.black87,
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (message.isUser) ...[
+                        const SizedBox(width: 8),
+                        CircleAvatar(
+                          backgroundColor: Colors.purple.shade400,
+                          child: const Icon(Icons.person, color: Colors.white),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(
+                top: BorderSide(color: Colors.grey.shade300, width: 1.0),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _messageController,
+                    decoration: const InputDecoration(
+                      hintText: 'メッセージを入力...',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(24.0)),
+                      ),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 16.0,
+                        vertical: 12.0,
+                      ),
+                    ),
+                    onSubmitted: (_) => _sendMessage(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: _sendMessage,
+                  icon: const Icon(Icons.send),
+                  color: Colors.purple,
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.purple.shade100,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
