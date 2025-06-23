@@ -21,7 +21,6 @@ router = APIRouter(
 @router.post("/chat", response_model=ChatMessage)
 async def handle_chat_request(
     request: Request,
-    request: Request,
     chat_request: ChatRequest = Body(...),
     chat_service: VertexChatService = Depends(get_vertex_chat_service),
     gcs_service: "GCSService" = Depends(get_gcs_service) # GCSServiceをインポートしてDI

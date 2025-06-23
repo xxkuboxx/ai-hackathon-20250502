@@ -30,6 +30,7 @@ SUPPORTED_AUDIO_MIME_TYPES = [
     "audio/wav",   # WAV
     "audio/x-wav", # WAV
     "audio/mp4",   # M4A (MPEG-4 Audio)
+    "audio/x-m4a",   # M4A
     "audio/aac",   # AAC
 ]
 
@@ -64,7 +65,7 @@ async def process_audio_file(
             original_file_extension = ".mp3"
         elif content_type in ["audio/wav", "audio/x-wav"]:
             original_file_extension = ".wav"
-        elif content_type == "audio/mp4":
+        elif content_type in ["audio/wav", "audio/x-m4a"]:
             original_file_extension = ".m4a"
         elif content_type == "audio/aac":
             original_file_extension = ".aac"
