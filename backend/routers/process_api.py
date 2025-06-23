@@ -25,18 +25,24 @@ router = APIRouter(
     tags=["Audio Processing"],
 )
 
-SUPPORTED_AUDIO_MIME_TYPES = ["audio/mpeg", "audio/wav", "audio/x-wav"]
+SUPPORTED_AUDIO_MIME_TYPES = [
+    "audio/mpeg",  # MP3
+    "audio/wav",   # WAV
+    "audio/x-wav", # WAV
+    "audio/mp4",   # M4A (MPEG-4 Audio)
+    "audio/aac",   # AAC
+]
 
 @router.post("/process", response_model=ProcessResponse)
 async def process_audio_file(
-    file: Annotated[UploadFile, File(description="処理する音声ファイル (MP3またはWAV)。")],
+    file: Annotated[UploadFile, File(description="処理する音声ファイル (MP3, WAV, M4A, AAC)。")],
     gcs_service: GCSService = Depends(get_gcs_service)
 ):
     # local_temp_file_path was unused and has been removed.
     try:
-        logger.info(f"ファイルアップロードリクエスト受信: {file.filename}")
+        logger.info(f"ファイルアップロードリクエスト受信: {file.filename}, Content-Type: {file.content_type}")
         if file.content_type not in SUPPORTED_AUDIO_MIME_TYPES:
-            raise UnsupportedMediaTypeException(f"サポートされていないファイルタイプです: {file.content_type}。")
+            raise UnsupportedMediaTypeException(f"サポートされていないファイルタイプです: {file.content_type}。サポートされているタイプ: {', '.join(SUPPORTED_AUDIO_MIME_TYPES)}")
 
         actual_file_size = file.size
         if actual_file_size is None: # Should ideally not happen with UploadFile
@@ -52,8 +58,22 @@ async def process_audio_file(
         file_id = str(uuid.uuid4())
         logger.info(f"処理用の一意なIDを生成しました: {file_id}")
 
-        original_file_extension = ".mp3" if file.content_type == "audio/mpeg" else \
-                                  ".wav" if file.content_type in ["audio/wav", "audio/x-wav"] else ".dat"
+        # Determine file extension based on MIME type
+        content_type = file.content_type
+        if content_type == "audio/mpeg":
+            original_file_extension = ".mp3"
+        elif content_type in ["audio/wav", "audio/x-wav"]:
+            original_file_extension = ".wav"
+        elif content_type == "audio/mp4":
+            original_file_extension = ".m4a"
+        elif content_type == "audio/aac":
+            original_file_extension = ".aac"
+        else:
+            # This case should ideally be caught by the SUPPORTED_AUDIO_MIME_TYPES check,
+            # but as a fallback, use a generic extension.
+            logger.warning(f"予期しないコンテントタイプ '{content_type}' のための拡張子を決定できません。'.dat' を使用します。")
+            original_file_extension = ".dat"
+
         gcs_blob_name_original = f"original/{file_id}{original_file_extension}"
 
         # GCSService is expected to raise GCSUploadErrorException on failure.

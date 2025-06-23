@@ -55,8 +55,9 @@ class ChatRequest(BaseModel):
     analysis_context: Optional[AnalysisResult] = Field(
         None, description="現在の楽曲の解析情報（トラックの雰囲気/テーマ）"
     )
-    # MusicXMLのGCS URLの代わりに、MusicXMLの内容自体を格納するフィールドに変更
-    musicxml_content: Optional[str] = Field(None, description="生成されたMusicXMLファイルの内容（文字列）")
+    musicxml_gcs_url: Optional[HttpUrl] = Field(
+        None, description="MusicXMLファイルが格納されているGoogle Cloud StorageのURL。指定された場合、ここからMusicXMLを取得します。"
+    )
 
 
 # 以下の構造化出力モデルは新しいフローでは使用されないため削除

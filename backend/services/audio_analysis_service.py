@@ -70,9 +70,13 @@ class AudioAnalyzer:
             return "audio/mpeg"
         elif ext == ".wav":
             return "audio/wav"
+        elif ext == ".m4a":
+            return "audio/mp4"
+        elif ext == ".aac":
+            return "audio/aac"
         else:
-            logger.warning(f"不明なファイル拡張子 '{ext}' のため、MIMEタイプを 'audio/mpeg' とします（フォールバック）。GCSパス: {gcs_file_path}")
-            return "audio/mpeg" # フォールバックとしてMPEGを指定
+            logger.warning(f"不明なファイル拡張子 '{ext}' のため、MIMEタイプを 'application/octet-stream' とします（フォールバック）。GCSパス: {gcs_file_path}")
+            return "application/octet-stream" # より汎用的なフォールバックMIMEタイプ
 
     # _call_vertex_api メソッドの is_structured_output と output_schema は今回不要なので削除またはデフォルトをFalseに
     async def _call_vertex_api(

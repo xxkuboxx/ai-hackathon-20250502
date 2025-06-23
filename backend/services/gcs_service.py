@@ -86,6 +86,54 @@ class GCSService:
         """
         return f"https://storage.googleapis.com/{bucket_name}/{blob_name}"
 
+    def _parse_gcs_url(self, gcs_url: str) -> tuple[str, str]:
+        """
+        Parses a GCS URL (gs://bucket/object or https://storage.googleapis.com/bucket/object)
+        and returns (bucket_name, blob_name).
+        Raises ValueError if the URL format is invalid.
+        """
+        if gcs_url.startswith("gs://"):
+            parts = gcs_url[5:].split("/", 1)
+            if len(parts) == 2:
+                return parts[0], parts[1]
+        elif gcs_url.startswith("https://storage.googleapis.com/"):
+            parts = gcs_url[len("https://storage.googleapis.com/"):].split("/", 1)
+            if len(parts) == 2:
+                return parts[0], parts[1]
+        raise ValueError(f"Invalid GCS URL format: {gcs_url}")
+
+    async def download_file_as_string_from_gcs(self, gcs_url: str, encoding: str = "utf-8") -> str:
+        """
+        Downloads a file from GCS given its GCS URL and returns its content as a string.
+        """
+        try:
+            bucket_name, blob_name = self._parse_gcs_url(gcs_url)
+            bucket = self.client.bucket(bucket_name)
+            blob = bucket.blob(blob_name)
+
+            logger.info(f"Attempting to download GCS object: gs://{bucket_name}/{blob_name}")
+
+            # Use run_in_threadpool for the blocking GCS download call
+            file_bytes = await run_in_threadpool(blob.download_as_bytes)
+
+            content = file_bytes.decode(encoding)
+            logger.info(f"Successfully downloaded and decoded GCS object: gs://{bucket_name}/{blob_name}")
+            return content
+        except DefaultCredentialsError as e:
+            logger.error(f"GCS authentication error while downloading '{gcs_url}': {e}", exc_info=True)
+            # Consider a more specific exception, e.g., GCSDownloadErrorException
+            raise GCSUploadErrorException(message=f"GCS authentication/configuration error during download from {gcs_url}.")
+        except ValueError as e: # From _parse_gcs_url
+            logger.error(f"Invalid GCS URL format for download: {gcs_url} - {e}", exc_info=True)
+            raise GCSUploadErrorException(message=f"Invalid GCS URL format: {gcs_url}.") # Or a more specific client error
+        except Exception as e:
+            # This could include google.cloud.exceptions.NotFound, Forbidden, etc.
+            logger.error(f"Failed to download file from GCS '{gcs_url}': {e}", exc_info=True)
+            # Consider a more specific exception, e.g., GCSDownloadErrorException
+            # Or re-raise specific Google Cloud exceptions if the caller should handle them.
+            raise GCSUploadErrorException(message=f"Failed to download file from GCS: {gcs_url}. Error: {type(e).__name__}")
+
+
 # Helper function to get an instance of the service, potentially with dependency injection in mind for FastAPI
 def get_gcs_service() -> GCSService:
     # In a FastAPI context, you might initialize this with settings or manage its lifecycle.

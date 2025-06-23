@@ -3,10 +3,12 @@
 import logging
 from fastapi import APIRouter, Request, Body, Depends
 from fastapi.responses import StreamingResponse
+from typing import Optional # Optional をインポート
 
 from models import ChatRequest, ChatMessage, ErrorCode, AnalysisResult
 from exceptions import VertexAIAPIErrorException, InternalServerErrorException # Changed
 from services.vertex_chat_service import VertexChatService, get_vertex_chat_service
+from services.gcs_service import GCSService, get_gcs_service # GCSService をインポート
 from services import prompts
 
 logger = logging.getLogger(__name__)
@@ -19,22 +21,44 @@ router = APIRouter(
 @router.post("/chat", response_model=ChatMessage)
 async def handle_chat_request(
     request: Request,
+    request: Request,
     chat_request: ChatRequest = Body(...),
-    chat_service: VertexChatService = Depends(get_vertex_chat_service)
+    chat_service: VertexChatService = Depends(get_vertex_chat_service),
+    gcs_service: "GCSService" = Depends(get_gcs_service) # GCSServiceをインポートしてDI
 ):
-    logger.info(f"チャットリクエスト受信。メッセージ数: {len(chat_request.messages)}")
+    logger.info(f"チャットリクエスト受信。メッセージ数: {len(chat_request.messages)}, musicxml_gcs_url: {chat_request.musicxml_gcs_url}")
+
+    musicxml_content_for_vertex: Optional[str] = None # Vertex AIに渡すMusicXMLコンテンツ
 
     try:
-        # build_vertex_chat_messages に musicxml_gcs_url も渡すように変更
-        # build_vertex_chat_messages に musicxml_content を渡すように変更
+        if chat_request.musicxml_gcs_url:
+            logger.info(f"musicxml_gcs_urlが提供されました: {chat_request.musicxml_gcs_url}。GCSからダウンロードします。")
+            try:
+                # str(chat_request.musicxml_gcs_url) でPydanticのHttpUrlを文字列に変換
+                musicxml_content_for_vertex = await gcs_service.download_file_as_string_from_gcs(str(chat_request.musicxml_gcs_url))
+                logger.info(f"MusicXMLファイルのダウンロード成功。文字数: {len(musicxml_content_for_vertex)}")
+            except Exception as e: # GCSDownloadErrorException やその他 GCS関連の例外を想定
+                logger.error(f"GCSからのMusicXMLファイルダウンロードエラー ({chat_request.musicxml_gcs_url}): {e}", exc_info=True)
+                # GCSからのダウンロードエラーはシステムエラーとして扱う
+                raise InternalServerErrorException(
+                    message="MusicXMLファイルの取得に失敗しました。",
+                    detail=f"GCSからのダウンロードエラー: {str(e)}"
+                )
+        else:
+            logger.info("musicxml_gcs_urlは提供されませんでした。バッキングトラックなしとして処理します。")
+            # musicxml_content_for_vertex は None のまま
+
+        # Vertex AIチャットメッセージの構築
         vertex_messages = chat_service.build_vertex_chat_messages(
             system_prompt=prompts.SESSIONMUSE_CHAT_SYSTEM_PROMPT,
             analysis_context=chat_request.analysis_context,
             chat_history=chat_request.messages,
-            musicxml_content=chat_request.musicxml_content # musicxml_gcs_url から変更
+            musicxml_content=musicxml_content_for_vertex # ダウンロードした内容またはNoneを渡す
         )
+    except InternalServerErrorException: # 既にInternalServerErrorExceptionならそのままraise
+        raise
     except Exception as e:
-        logger.error(f"Vertex AIチャットメッセージの構築エラー: {e}", exc_info=True)
+        logger.error(f"Vertex AIチャットメッセージの構築またはGCS処理中の予期せぬエラー: {e}", exc_info=True)
         raise InternalServerErrorException(message="AIプロンプトの構築に失敗しました。",detail=str(e))
 
     accept_header = request.headers.get("accept", "").lower()
