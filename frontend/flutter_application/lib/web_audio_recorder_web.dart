@@ -10,6 +10,7 @@ class WebAudioRecorderWeb {
   bool _isRecording = false;
   bool _isPlaying = false;
   Timer? _playbackTimer;
+  html.AudioElement? _audioElement; // 再生中のAudioElementを保持
   html.MediaRecorder? _mediaRecorder;
   html.MediaStream? _mediaStream;
   final List<html.Blob> _recordedChunks = [];
@@ -351,36 +352,43 @@ class WebAudioRecorderWeb {
       final blob = html.Blob([audioData], mimeType);
       final url = html.Url.createObjectUrlFromBlob(blob);
       
-      final audioElement = html.AudioElement(url);
-      audioElement.volume = 0.7; // 70%の音量
+      _audioElement = html.AudioElement(url);
+      _audioElement!.volume = 0.7; // 70%の音量
       
       // 再生完了を監視
-      audioElement.onEnded.listen((_) {
-        html.Url.revokeObjectUrl(url); // メモリリークを防ぐ
+      _audioElement!.onEnded.listen((_) {
+        if (_audioElement != null) {
+          html.Url.revokeObjectUrl(_audioElement!.src); // メモリリークを防ぐ
+        }
         _isPlaying = false;
         _playbackStateController.add(false);
+        _audioElement = null;
         if (kDebugMode) print('Web audio playback completed (recorded audio)');
       });
       
       // エラーハンドリング
-      audioElement.onError.listen((error) {
+      _audioElement!.onError.listen((error) {
         if (kDebugMode) print('Audio playback error: $error');
-        html.Url.revokeObjectUrl(url);
+        if (_audioElement != null) {
+          html.Url.revokeObjectUrl(_audioElement!.src);
+        }
         _isPlaying = false;
         _playbackStateController.add(false);
+        _audioElement = null;
         // フォールバック：テストビープ音
         _playTestBeep();
       });
       
       // 再生開始
-      await audioElement.play();
+      await _audioElement!.play();
       if (kDebugMode) print('Started playing recorded audio data ($mimeType)');
       
       // フォールバックタイマー（30秒後に強制停止）
       _playbackTimer = Timer(const Duration(seconds: 30), () {
-        if (_isPlaying) {
-          audioElement.pause();
-          html.Url.revokeObjectUrl(url);
+        if (_isPlaying && _audioElement != null) {
+          _audioElement!.pause();
+          html.Url.revokeObjectUrl(_audioElement!.src);
+          _audioElement = null;
           _isPlaying = false;
           _playbackStateController.add(false);
           if (kDebugMode) print('Audio playback timeout (30s)');
@@ -457,6 +465,15 @@ class WebAudioRecorderWeb {
     try {
       _playbackTimer?.cancel();
       _playbackTimer = null;
+
+      if (_audioElement != null) {
+        _audioElement!.pause();
+        if (_audioElement!.src.isNotEmpty) {
+          html.Url.revokeObjectUrl(_audioElement!.src);
+        }
+        _audioElement = null;
+      }
+
       _isPlaying = false;
       _playbackStateController.add(false);
       if (kDebugMode) print('Web audio playback stopped');
@@ -502,6 +519,9 @@ class WebAudioRecorderWeb {
     // 録音を強制停止
     forceStopRecording();
     
+    // 再生中の音声を停止
+    stopAudio();
+
     // タイマーを停止
     _playbackTimer?.cancel();
     _playbackTimer = null;
