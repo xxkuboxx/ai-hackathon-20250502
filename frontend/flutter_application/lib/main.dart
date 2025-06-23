@@ -1,12 +1,77 @@
 import 'package:flutter/material.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
-import 'dart:math';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 // 録音状態を管理するenum
 enum RecordingState {
-  idle,      // 待機中
+  idle, // 待機中
   recording, // 録音中
   uploading, // アップロード中
+}
+
+// API応答データモデル
+class AudioAnalysisResult {
+  final String key;
+  final int bpm;
+  final String chords;
+  final String genre;
+  final String? backingTrackUrl;
+
+  AudioAnalysisResult({
+    required this.key,
+    required this.bpm,
+    required this.chords,
+    required this.genre,
+    this.backingTrackUrl,
+  });
+
+  factory AudioAnalysisResult.fromJson(Map<String, dynamic> json) {
+    return AudioAnalysisResult(
+      key: json['key'] ?? 'Unknown',
+      bpm: json['bpm'] ?? 120,
+      chords: json['chords'] ?? 'Unknown',
+      genre: json['genre'] ?? 'Unknown',
+      backingTrackUrl: json['backing_track_url'],
+    );
+  }
+}
+
+// APIサービスクラス
+class AudioProcessingService {
+  static const String baseUrl =
+      'https://sessionmuse-backend-469350304561.us-east5.run.app';
+
+  static Future<AudioAnalysisResult?> uploadAndProcess(String filePath) async {
+    try {
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/api/process'),
+      );
+
+      // ファイルを添付
+      var file = await http.MultipartFile.fromPath('file', filePath);
+      request.files.add(file);
+
+      // リクエスト送信
+      var response = await request.send();
+
+      if (response.statusCode == 200) {
+        var responseBody = await response.stream.bytesToString();
+        var jsonData = json.decode(responseBody);
+
+        return AudioAnalysisResult.fromJson(jsonData);
+      } else {
+        print('API Error: ${response.statusCode}');
+        return null;
+      }
+    } catch (e) {
+      print('Upload Error: $e');
+      return null;
+    }
+  }
 }
 
 void main() {
@@ -37,26 +102,31 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  String? _recordedFilePath;
+  String? _mp3FilePath;
   final RecorderController _recorderController = RecorderController();
   final PlayerController playerController = PlayerController();
   final TextEditingController _messageController = TextEditingController();
   final List<ChatMessage> _messages = [];
   final ScrollController _scrollController = ScrollController();
-  
+
   // 状態管理
   bool _isAnalyzed = false;
   bool _isPlaying = false;
-  double _volume = 0.5;
-  
+
   // チャット画面の状態管理
   bool _isChatOpen = false;
-  
+
   // 録音状態管理
   RecordingState _recordingState = RecordingState.idle;
-  
+
   // 録音データ管理
   List<double> _recordedWaveformData = [];
+
+  // API分析結果
+  AudioAnalysisResult? _analysisResult;
+
+  // プレイヤー状態リスナー管理
+  bool _playerListenerAdded = false;
 
   @override
   void initState() {
@@ -75,6 +145,7 @@ class _MyHomePageState extends State<MyHomePage> {
   void dispose() {
     super.dispose();
     _recorderController.dispose();
+    playerController.dispose();
   }
 
   void _sendMessage() {
@@ -100,35 +171,176 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  void _simulateUpload() {
-    print('_simulateUpload called: _recordingState = uploading');
-    setState(() {
-      _recordingState = RecordingState.uploading;
-      print('State changed to: uploading');
-    });
+  Future<String?> _setupRecording() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final outputPath =
+          '${directory.path}/recorded_audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
-    // アップロードのシミュレーション（3秒で完了）
-    Future.delayed(const Duration(seconds: 3), () {
+      print('録音開始: $outputPath');
+
+      // RecorderControllerで録音開始
+      await _recorderController.record(path: outputPath);
+
+      print('録音が開始されました');
+      return outputPath;
+    } catch (e) {
+      print('録音設定エラー: $e');
+      return null;
+    }
+  }
+
+  Future<void> _uploadAndAnalyze() async {
+    if (_mp3FilePath == null) {
+      print('音声ファイルが存在しません');
+      return;
+    }
+
+    print('API upload started: $_mp3FilePath');
+
+    try {
+      final result = await AudioProcessingService.uploadAndProcess(
+        _mp3FilePath!,
+      );
+
+      if (result != null) {
+        setState(() {
+          _analysisResult = result;
+          _recordingState = RecordingState.idle;
+          _isAnalyzed = true;
+        });
+
+        if (mounted && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('音楽解析が完了しました'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      } else {
+        setState(() {
+          _recordingState = RecordingState.idle;
+        });
+
+        if (mounted && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('解析に失敗しました'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('Upload error: $e');
       setState(() {
         _recordingState = RecordingState.idle;
-        print('Upload completed: _recordingState = idle');
       });
-      // Toast（SnackBar）表示
+
       if (mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('録音データの送信が完了しました'),
+            content: Text('アップロードエラーが発生しました'),
             duration: Duration(seconds: 2),
           ),
         );
       }
-    });
+    }
   }
 
-  void _togglePlayback() {
-    setState(() {
-      _isPlaying = !_isPlaying;
-    });
+  Future<void> _togglePlayback() async {
+    if (_mp3FilePath == null) {
+      print('音声ファイルパスがnullです');
+      return;
+    }
+
+    print('音声ファイルパス: $_mp3FilePath');
+
+    // ファイルの存在確認
+    final file = File(_mp3FilePath!);
+    if (!await file.exists()) {
+      print('音声ファイルが存在しません: $_mp3FilePath');
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('音声ファイルが見つかりません'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    final fileSize = await file.length();
+    print('ファイルサイズ: $fileSize bytes');
+
+    try {
+      if (_isPlaying) {
+        // 停止
+        print('音声再生を停止します');
+        await playerController.stopPlayer();
+        setState(() {
+          _isPlaying = false;
+        });
+        print('音声再生が停止されました');
+      } else {
+        // 再生開始前にPlayerControllerをリセット
+        print('音声再生を開始します');
+
+        // 既存の再生を完全に停止してリセット
+        try {
+          await playerController.stopPlayer();
+          print('既存の再生を停止しました');
+        } catch (e) {
+          print('停止時エラー（無視可能）: $e');
+        }
+
+        // プレイヤーを準備
+        await playerController.preparePlayer(
+          path: _mp3FilePath!,
+          shouldExtractWaveform: true,
+        );
+        print('プレイヤーの準備が完了しました');
+
+        // リスナーを一度だけ追加
+        if (!_playerListenerAdded) {
+          playerController.onPlayerStateChanged.listen((state) {
+            print('プレイヤー状態変更: ${state.toString()}');
+            if (state.isPaused || state.isStopped) {
+              if (mounted) {
+                setState(() {
+                  _isPlaying = false;
+                });
+                print('再生状態をfalseに更新しました');
+              }
+            }
+          });
+          _playerListenerAdded = true;
+          print('プレイヤーリスナーを追加しました');
+        }
+
+        // 再生開始
+        await playerController.startPlayer();
+        setState(() {
+          _isPlaying = true;
+        });
+        print('音声再生が開始されました');
+      }
+    } catch (e) {
+      print('再生エラー: $e');
+      setState(() {
+        _isPlaying = false;
+      });
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('再生エラー: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   void _toggleChat() {
@@ -205,11 +417,15 @@ class _MyHomePageState extends State<MyHomePage> {
                                     height: 50,
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
-                                      color: _recordingState == RecordingState.recording 
+                                      color:
+                                          _recordingState ==
+                                              RecordingState.recording
                                           ? Colors.red.shade100
                                           : Colors.blue.shade100,
                                       border: Border.all(
-                                        color: _recordingState == RecordingState.recording 
+                                        color:
+                                            _recordingState ==
+                                                RecordingState.recording
                                             ? Colors.red.shade300
                                             : Colors.blue.shade300,
                                         width: 1.5,
@@ -217,35 +433,89 @@ class _MyHomePageState extends State<MyHomePage> {
                                     ),
                                     child: IconButton(
                                       icon: Icon(
-                                        _recordingState == RecordingState.recording 
-                                            ? Icons.stop 
+                                        _recordingState ==
+                                                RecordingState.recording
+                                            ? Icons.stop
                                             : Icons.mic,
                                         size: 20,
-                                        color: _recordingState == RecordingState.uploading
-                                            ? Colors.grey // 送信中はグレー
-                                            : (_recordingState == RecordingState.recording ? Colors.red : Colors.blue),
+                                        color:
+                                            _recordingState ==
+                                                RecordingState.uploading
+                                            ? Colors
+                                                  .grey // 送信中はグレー
+                                            : (_recordingState ==
+                                                      RecordingState.recording
+                                                  ? Colors.red
+                                                  : Colors.blue),
                                       ),
-                                      onPressed: _recordingState == RecordingState.uploading
+                                      onPressed:
+                                          _recordingState ==
+                                              RecordingState.uploading
                                           ? null
                                           : () async {
-                                              if (_recordingState == RecordingState.idle) {
+                                              if (_recordingState ==
+                                                  RecordingState.idle) {
                                                 // 録音開始
                                                 setState(() {
-                                                  _recordingState = RecordingState.recording;
+                                                  _recordingState =
+                                                      RecordingState.recording;
                                                   _isAnalyzed = true;
                                                 });
-                                                _recorderController.record();
+                                                final recordingPath =
+                                                    await _setupRecording();
+                                                if (recordingPath != null) {
+                                                  setState(() {
+                                                    _mp3FilePath =
+                                                        recordingPath;
+                                                  });
+                                                }
                                               } else {
                                                 // 録音停止
                                                 setState(() {
-                                                  _recordingState = RecordingState.uploading;
+                                                  _recordingState =
+                                                      RecordingState.uploading;
                                                 });
-                                                final recordedFilePath = await _recorderController.stop();
+                                                print('録音停止中...');
+                                                final recordedFilePath =
+                                                    await _recorderController
+                                                        .stop();
+                                                print(
+                                                  '録音停止結果: $recordedFilePath',
+                                                );
+
                                                 if (recordedFilePath != null) {
-                                                  _simulateUpload();
+                                                  setState(() {
+                                                    _mp3FilePath =
+                                                        recordedFilePath;
+                                                  });
+                                                  print(
+                                                    '録音完了: $recordedFilePath',
+                                                  );
+
+                                                  // ファイルの存在確認
+                                                  final file = File(
+                                                    recordedFilePath,
+                                                  );
+                                                  if (await file.exists()) {
+                                                    final fileSize = await file
+                                                        .length();
+                                                    print(
+                                                      '録音ファイルサイズ: $fileSize bytes',
+                                                    );
+                                                  } else {
+                                                    print('録音ファイルが存在しません!');
+                                                  }
+
+                                                  // APIにアップロードして解析
+                                                  await _uploadAndAnalyze();
                                                 } else {
-                                                  print('recordedFilePath is null!');
-                                                  _simulateUpload();
+                                                  print(
+                                                    'recordedFilePath is null!',
+                                                  );
+                                                  setState(() {
+                                                    _recordingState =
+                                                        RecordingState.idle;
+                                                  });
                                                 }
                                                 setState(() {
                                                   _isAnalyzed = true;
@@ -253,17 +523,23 @@ class _MyHomePageState extends State<MyHomePage> {
                                               }
                                             },
                                       style: IconButton.styleFrom(
-                                        backgroundColor: _recordingState == RecordingState.uploading
+                                        backgroundColor:
+                                            _recordingState ==
+                                                RecordingState.uploading
                                             ? Colors.grey.shade200
-                                            : (_recordingState == RecordingState.recording
-                                                ? Colors.red.shade100
-                                                : Colors.blue.shade100),
+                                            : (_recordingState ==
+                                                      RecordingState.recording
+                                                  ? Colors.red.shade100
+                                                  : Colors.blue.shade100),
                                         side: BorderSide(
-                                          color: _recordingState == RecordingState.uploading
+                                          color:
+                                              _recordingState ==
+                                                  RecordingState.uploading
                                               ? Colors.grey
-                                              : (_recordingState == RecordingState.recording
-                                                  ? Colors.red.shade300
-                                                  : Colors.blue.shade300),
+                                              : (_recordingState ==
+                                                        RecordingState.recording
+                                                    ? Colors.red.shade300
+                                                    : Colors.blue.shade300),
                                           width: 1.5,
                                         ),
                                       ),
@@ -271,13 +547,15 @@ class _MyHomePageState extends State<MyHomePage> {
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
-                                    _recordingState == RecordingState.recording 
-                                        ? '録音中' 
+                                    _recordingState == RecordingState.recording
+                                        ? '録音中'
                                         : '録音開始',
                                     style: TextStyle(
                                       fontSize: 12,
-                                      color: _recordingState == RecordingState.recording 
-                                          ? Colors.red 
+                                      color:
+                                          _recordingState ==
+                                              RecordingState.recording
+                                          ? Colors.red
                                           : Colors.grey,
                                       fontWeight: FontWeight.w500,
                                     ),
@@ -296,69 +574,80 @@ class _MyHomePageState extends State<MyHomePage> {
                                     width: 1.0,
                                   ),
                                 ),
-                                child: _recordingState == RecordingState.recording
+                                child:
+                                    _recordingState == RecordingState.recording
                                     ? AudioWaveforms(
                                         recorderController: _recorderController,
-                                        size: Size(MediaQuery.of(context).size.width - 80, 60),
+                                        size: Size(
+                                          MediaQuery.of(context).size.width -
+                                              80,
+                                          60,
+                                        ),
                                         waveStyle: const WaveStyle(
                                           waveCap: StrokeCap.round,
                                           extendWaveform: true,
                                           showMiddleLine: false,
                                         ),
                                       )
-                                    : _recordingState == RecordingState.uploading
-                                        ? const Center(
-                                            child: Column(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons.cloud_upload,
-                                                  color: Colors.blue,
-                                                  size: 24,
-                                                ),
-                                                SizedBox(height: 8),
-                                                Text(
-                                                  '録音データを送信中...',
-                                                  style: TextStyle(
-                                                    fontSize: 12,
-                                                    fontWeight: FontWeight.w500,
-                                                    color: Colors.blue,
-                                                  ),
-                                                ),
-                                              ],
+                                    : _recordingState ==
+                                          RecordingState.uploading
+                                    ? const Center(
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Icon(
+                                              Icons.cloud_upload,
+                                              color: Colors.blue,
+                                              size: 24,
                                             ),
-                                          )
-                                        : (_recordingState == RecordingState.idle)
-                                            ? const Center(
-                                                child: Text(
-                                                  '録音を開始すると波形が表示されます',
-                                                  style: TextStyle(
-                                                    color: Colors.grey,
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              )
-                                            : _recordedWaveformData.isNotEmpty
-                                                ? AudioFileWaveforms(
-                                                    playerController: playerController,
-                                                    size: Size(MediaQuery.of(context).size.width - 80, 60),
-                                                    waveformData: _recordedWaveformData,
-                                                    playerWaveStyle: const PlayerWaveStyle(
-                                                      seekLineColor: Colors.blue,
-                                                      showSeekLine: true,
-                                                      waveCap: StrokeCap.round,
-                                                    ),
-                                                    waveformType: WaveformType.fitWidth,
-                                                  )
-                                                : const Center(
-                                                    child: Text(
-                                                      '録音を開始すると波形が表示されます',
-                                                      style: TextStyle(
-                                                        color: Colors.grey,
-                                                        fontSize: 12,
-                                                      ),
-                                                    ),
-                                                  ),
+                                            SizedBox(height: 8),
+                                            Text(
+                                              '音声解析中...',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                                color: Colors.blue,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      )
+                                    : (_recordingState == RecordingState.idle)
+                                    ? const Center(
+                                        child: Text(
+                                          '録音を開始すると波形が表示されます',
+                                          style: TextStyle(
+                                            color: Colors.grey,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      )
+                                    : _recordedWaveformData.isNotEmpty
+                                    ? AudioFileWaveforms(
+                                        playerController: playerController,
+                                        size: Size(
+                                          MediaQuery.of(context).size.width -
+                                              80,
+                                          60,
+                                        ),
+                                        waveformData: _recordedWaveformData,
+                                        playerWaveStyle: const PlayerWaveStyle(
+                                          seekLineColor: Colors.blue,
+                                          showSeekLine: true,
+                                          waveCap: StrokeCap.round,
+                                        ),
+                                        waveformType: WaveformType.fitWidth,
+                                      )
+                                    : const Center(
+                                        child: Text(
+                                          '録音を開始すると波形が表示されます',
+                                          style: TextStyle(
+                                            color: Colors.grey,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
                               ),
                               const SizedBox(height: 16),
                             ],
@@ -402,10 +691,22 @@ class _MyHomePageState extends State<MyHomePage> {
                                   ],
                                 ),
                                 const SizedBox(height: 16),
-                                _buildAnalysisRow('Key', 'C Major'),
-                                _buildAnalysisRow('BPM', '120'),
-                                _buildAnalysisRow('Chords', 'C | G | Am | F'),
-                                _buildAnalysisRow('Genre by AI', 'Rock'),
+                                _buildAnalysisRow(
+                                  'Key',
+                                  _analysisResult?.key ?? 'C Major',
+                                ),
+                                _buildAnalysisRow(
+                                  'BPM',
+                                  _analysisResult?.bpm.toString() ?? '120',
+                                ),
+                                _buildAnalysisRow(
+                                  'Chords',
+                                  _analysisResult?.chords ?? 'C | G | Am | F',
+                                ),
+                                _buildAnalysisRow(
+                                  'Genre by AI',
+                                  _analysisResult?.genre ?? 'Rock',
+                                ),
                               ],
                             ),
                           ),
@@ -454,31 +755,55 @@ class _MyHomePageState extends State<MyHomePage> {
                                       height: 60,
                                       decoration: BoxDecoration(
                                         color: Colors.grey.shade100,
-                                        borderRadius: BorderRadius.circular(8.0),
+                                        borderRadius: BorderRadius.circular(
+                                          8.0,
+                                        ),
                                         border: Border.all(
                                           color: Colors.grey.shade300,
                                           width: 1.0,
                                         ),
                                       ),
-                                      child: AudioFileWaveforms(
-                                        playerController: playerController,
-                                        size: Size(MediaQuery.of(context).size.width - 80, 60),
-                                        waveformData: _recordedWaveformData,
-                                        playerWaveStyle: const PlayerWaveStyle(
-                                          seekLineColor: Colors.orange,
-                                          showSeekLine: true,
-                                          waveCap: StrokeCap.round,
-                                        ),
-                                        waveformType: WaveformType.fitWidth,
-                                      ),
+                                      child: _mp3FilePath != null
+                                          ? AudioFileWaveforms(
+                                              playerController:
+                                                  playerController,
+                                              size: Size(
+                                                MediaQuery.of(
+                                                      context,
+                                                    ).size.width -
+                                                    80,
+                                                60,
+                                              ),
+                                              playerWaveStyle:
+                                                  const PlayerWaveStyle(
+                                                    seekLineColor:
+                                                        Colors.orange,
+                                                    showSeekLine: true,
+                                                    waveCap: StrokeCap.round,
+                                                  ),
+                                              waveformType:
+                                                  WaveformType.fitWidth,
+                                            )
+                                          : const Center(
+                                              child: Text(
+                                                '録音完了後に波形が表示されます',
+                                                style: TextStyle(
+                                                  color: Colors.grey,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ),
                                     ),
                                     const SizedBox(height: 16),
                                     Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
                                       children: [
                                         // Play/Stop ボタン
                                         IconButton(
-                                          onPressed: _togglePlayback,
+                                          onPressed: _mp3FilePath != null
+                                              ? _togglePlayback
+                                              : null,
                                           icon: Icon(
                                             _isPlaying
                                                 ? Icons.stop
@@ -486,9 +811,12 @@ class _MyHomePageState extends State<MyHomePage> {
                                             color: Colors.white,
                                           ),
                                           style: IconButton.styleFrom(
-                                            backgroundColor: _isPlaying
-                                                ? Colors.red
-                                                : Colors.green,
+                                            backgroundColor:
+                                                _mp3FilePath != null
+                                                ? (_isPlaying
+                                                      ? Colors.red
+                                                      : Colors.green)
+                                                : Colors.grey,
                                             padding: const EdgeInsets.all(12),
                                           ),
                                         ),
@@ -496,15 +824,35 @@ class _MyHomePageState extends State<MyHomePage> {
 
                                         // Download ボタン
                                         IconButton(
-                                          onPressed: () {
-                                            // ダウンロード機能
-                                          },
+                                          onPressed: _mp3FilePath != null
+                                              ? () {
+                                                  if (mounted &&
+                                                      context.mounted) {
+                                                    ScaffoldMessenger.of(
+                                                      context,
+                                                    ).showSnackBar(
+                                                      SnackBar(
+                                                        content: Text(
+                                                          '音声ファイルが保存されました: ${_mp3FilePath!.split('/').last}',
+                                                        ),
+                                                        duration:
+                                                            const Duration(
+                                                              seconds: 3,
+                                                            ),
+                                                      ),
+                                                    );
+                                                  }
+                                                }
+                                              : null,
                                           icon: const Icon(
                                             Icons.download,
                                             color: Colors.blue,
                                           ),
                                           style: IconButton.styleFrom(
-                                            backgroundColor: Colors.blue.shade50,
+                                            backgroundColor:
+                                                _mp3FilePath != null
+                                                ? Colors.blue.shade50
+                                                : Colors.grey.shade200,
                                             padding: const EdgeInsets.all(12),
                                           ),
                                         ),
