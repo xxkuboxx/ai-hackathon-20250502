@@ -50,6 +50,8 @@ MUSICXML_END
 MusicXML構造のみ出力してください。MUSICXML_START と MUSICXML_END の間に完全なMusicXMLを記述してください。
 ```xml や ``` のようなマークダウンの囲みなどいかなるマークダウンフォーマットも使用せず、
 コード部分のみをプレーンテキストで出力してください。
+後続の以下の処理でMusicXMLを抽出できるような出力にしてください。
+match = re.search(r"MUSICXML_START\s*([\s\S]+?)\s*MUSICXML_END", content, re.DOTALL)
 """
 
 # --- Prompts for vertex_chat_service.py ---

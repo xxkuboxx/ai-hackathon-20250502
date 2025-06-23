@@ -27,12 +27,12 @@ class VertexChatService:
                 }
                 self.llm = ChatVertexAI(
                     location=settings.VERTEX_AI_LOCATION,
-                    model_name=settings.GEMINI_MODEL_NAME,
+                    model_name=settings.CHAT_GEMINI_MODEL_NAME,
                     temperature=0.7,
                     request_timeout=settings.VERTEX_AI_TIMEOUT_SECONDS,
                     safety_settings=safety_settings_vertex,
                 )
-                logger.info(f"ChatVertexAI initialized for chat service with model '{settings.GEMINI_MODEL_NAME}', Location: {settings.VERTEX_AI_LOCATION}).")
+                logger.info(f"ChatVertexAI initialized for chat service with model '{settings.CHAT_GEMINI_MODEL_NAME}', Location: {settings.VERTEX_AI_LOCATION}).")
             except Exception as e:
                 logger.error(f"Failed to initialize ChatVertexAI for chat service: {e}", exc_info=True)
                 raise VertexAIAPIErrorException(message="Failed to initialize Vertex AI LLM for chat.", detail=str(e), error_code=ErrorCode.VERTEX_AI_API_ERROR)

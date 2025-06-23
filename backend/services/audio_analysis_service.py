@@ -34,8 +34,7 @@ class AudioAnalysisWorkflowState(TypedDict):
     entry_point_completed: Optional[bool] # エントリーポイントが完了したかどうかのフラグ
 
 class AudioAnalyzer:
-    # model_name のデフォルトを GEMINI_FLASH_MODEL_NAME に変更 (settingsに追加想定)
-    def __init__(self, location: str = settings.VERTEX_AI_LOCATION, model_name: str = settings.GEMINI_FLASH_MODEL_NAME, timeout: int = settings.VERTEX_AI_TIMEOUT_SECONDS):
+    def __init__(self, location: str = settings.VERTEX_AI_LOCATION, model_name: str = settings.ANALYZER_GEMINI_MODEL_NAME, timeout: int = settings.VERTEX_AI_TIMEOUT_SECONDS):
         self.location = location
         # self.model_name はメソッド呼び出し時に指定するため、ここでは初期化不要かもしれないが、互換性のため残す
         self.default_model_name = model_name
@@ -140,8 +139,7 @@ class AudioAnalyzer:
         口ずさみ音声を解析し、「トラックの雰囲気/テーマ」を取得する。
         """
         task = "Humming Audio Analysis (トラック雰囲気/テーマ取得)"
-        # モデル名を gemini-2.0-flash (settings.GEMINI_FLASH_MODEL_NAME) に指定
-        llm = self._get_llm(task, model_name=settings.GEMINI_FLASH_MODEL_NAME, for_generation=False)
+        llm = self._get_llm(task, model_name=settings.ANALYZER_GEMINI_MODEL_NAME, for_generation=False)
         mime_type = self._get_mime_type_from_gcs_path(gcs_file_path)
 
         # プロンプトは services.prompts から取得
@@ -179,8 +177,7 @@ class AudioAnalyzer:
         口ずさみ音声と「トラックの雰囲気/テーマ」からMusicXMLを生成する。
         """
         task = "MusicXML Generation (バッキングトラック生成)"
-        # モデル名を gemini-2.0-flash (settings.GEMINI_FLASH_MODEL_NAME) に指定
-        llm = self._get_llm(task, model_name=settings.GEMINI_FLASH_MODEL_NAME, for_generation=True)
+        llm = self._get_llm(task, model_name=settings.GENERATOR_GEMINI_MODEL_NAME, for_generation=True)
         mime_type = self._get_mime_type_from_gcs_path(gcs_file_path)
 
         # プロンプトテンプレートにテーマを埋め込む
