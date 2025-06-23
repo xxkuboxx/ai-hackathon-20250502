@@ -3,6 +3,7 @@ import logging
 import re
 import time
 import uuid
+import os # os.path.splitext を使用するために追加
 from typing import TypedDict, List, Dict, Any, Optional, Union
 
 from langgraph.graph import StateGraph, END
@@ -11,7 +12,7 @@ from langchain_core.exceptions import OutputParserException
 from langchain_google_vertexai import ChatVertexAI, HarmCategory, HarmBlockThreshold
 
 from models import AnalysisResult, ErrorCode, ChordProgressionOutput, KeyOutput, BpmOutput, GenreOutput
-from exceptions import AnalysisFailedException, GenerationFailedException, VertexAIAPIErrorException # Changed
+from exceptions import AnalysisFailedException, GenerationFailedException, VertexAIAPIErrorException
 from config import settings
 from services import prompts
 
@@ -41,7 +42,7 @@ class AudioAnalysisWorkflowState(TypedDict):
 class AudioAnalyzer:
     def __init__(self, location: str = settings.VERTEX_AI_LOCATION, model_name: str = settings.GEMINI_MODEL_NAME, timeout: int = settings.VERTEX_AI_TIMEOUT_SECONDS):
         self.location = location
-        self.model_name = model_name # Note: settings.GEMINI_MODEL_NAME is used here. Consider renaming if it's purely Vertex.
+        self.model_name = model_name
         self.timeout = timeout
         self.safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
@@ -65,6 +66,18 @@ class AudioAnalyzer:
         except Exception as e:
             logger.error(f"ChatVertexAIの初期化に失敗しました ('{task_description}'): {e}", exc_info=True)
             raise VertexAIAPIErrorException(message=f"Vertex AI LLMの初期化に失敗しました ('{task_description}')。", detail=str(e), error_code=ErrorCode.VERTEX_AI_API_ERROR)
+
+    def _get_mime_type_from_gcs_path(self, gcs_file_path: str) -> str:
+        """GCSファイルパスからMIMEタイプを推測するヘルパー関数"""
+        _, ext = os.path.splitext(gcs_file_path.lower())
+        if ext == ".mp3":
+            return "audio/mpeg"
+        elif ext == ".wav":
+            return "audio/wav"
+        else:
+            # 不明な場合はデフォルトで mpeg を試すか、エラーを出すか、設定に依存
+            logger.warning(f"不明なファイル拡張子 '{ext}' のため、MIMEタイプを 'audio/mpeg' とします。GCSパス: {gcs_file_path}")
+            return "audio/mpeg" # または適切なデフォルト/フォールバック
 
     async def _call_vertex_api(
         self,
@@ -116,10 +129,21 @@ class AudioAnalyzer:
     async def estimate_key(self, gcs_file_path: str, workflow_run_id: Optional[str]) -> str:
         task = "Key Estimation (Structured)"
         llm = self._get_llm(task)
-        prompt_text = prompts.KEY_ESTIMATION_PROMPT_STRUCTURED.format(gcs_file_path=gcs_file_path)
-        messages = [SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED), HumanMessage(content=prompt_text)]
+        mime_type = self._get_mime_type_from_gcs_path(gcs_file_path)
+        prompt_text_content = prompts.KEY_ESTIMATION_PROMPT_STRUCTURED
+        messages = [
+            SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED),
+            HumanMessage(content=[
+                prompt_text_content,
+                {
+                    "type": "media",
+                    "file_uri": gcs_file_path,
+                    "mime_type": mime_type,
+                }
+            ])
+        ]
         parsed_output: KeyOutput = await self._call_vertex_api(
-            llm, messages, task, {"gcs_file_path": gcs_file_path}, workflow_run_id, True, KeyOutput
+            llm, messages, task, {"gcs_file_path": gcs_file_path, "mime_type": mime_type}, workflow_run_id, True, KeyOutput
         )
         if not parsed_output.primary_key or parsed_output.primary_key == "Undetermined":
             logger.warning(f"[{task}] Vertex AI が未確定の主キーを返しました。")
@@ -129,10 +153,21 @@ class AudioAnalyzer:
     async def estimate_bpm(self, gcs_file_path: str, workflow_run_id: Optional[str]) -> int:
         task = "BPM Estimation (Structured)"
         llm = self._get_llm(task)
-        prompt_text = prompts.BPM_ESTIMATION_PROMPT_STRUCTURED.format(gcs_file_path=gcs_file_path)
-        messages = [SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED), HumanMessage(content=prompt_text)]
+        mime_type = self._get_mime_type_from_gcs_path(gcs_file_path)
+        prompt_text_content = prompts.BPM_ESTIMATION_PROMPT_STRUCTURED
+        messages = [
+            SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED),
+            HumanMessage(content=[
+                prompt_text_content,
+                {
+                    "type": "media",
+                    "file_uri": gcs_file_path,
+                    "mime_type": mime_type,
+                }
+            ])
+        ]
         parsed_output: BpmOutput = await self._call_vertex_api(
-            llm, messages, task, {"gcs_file_path": gcs_file_path}, workflow_run_id, True, BpmOutput
+            llm, messages, task, {"gcs_file_path": gcs_file_path, "mime_type": mime_type}, workflow_run_id, True, BpmOutput
         )
         if parsed_output.bpm <= 0:
             logger.warning(f"[{task}] Vertex AI が無効なBPMを返しました: {parsed_output.bpm}")
@@ -142,10 +177,21 @@ class AudioAnalyzer:
     async def estimate_chords(self, gcs_file_path: str, workflow_run_id: Optional[str]) -> List[str]:
         task = "Chord Progression Estimation (Structured)"
         llm = self._get_llm(task)
-        prompt_text = prompts.CHORD_PROGRESSION_PROMPT_STRUCTURED.format(gcs_file_path=gcs_file_path)
-        messages = [SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED), HumanMessage(content=prompt_text)]
+        mime_type = self._get_mime_type_from_gcs_path(gcs_file_path)
+        prompt_text_content = prompts.CHORD_PROGRESSION_PROMPT_STRUCTURED
+        messages = [
+            SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED),
+            HumanMessage(content=[
+                prompt_text_content,
+                {
+                    "type": "media",
+                    "file_uri": gcs_file_path,
+                    "mime_type": mime_type,
+                }
+            ])
+        ]
         parsed_output: ChordProgressionOutput = await self._call_vertex_api(
-            llm, messages, task, {"gcs_file_path": gcs_file_path}, workflow_run_id, True, ChordProgressionOutput
+            llm, messages, task, {"gcs_file_path": gcs_file_path, "mime_type": mime_type}, workflow_run_id, True, ChordProgressionOutput
         )
         if not parsed_output.chords:
             logger.warning(f"[{task}] Vertex AI がコード進行の空リストを返しました。Undeterminedとして扱います。")
@@ -155,10 +201,21 @@ class AudioAnalyzer:
     async def estimate_genre(self, gcs_file_path: str, workflow_run_id: Optional[str]) -> str:
         task = "Genre Estimation (Structured)"
         llm = self._get_llm(task)
-        prompt_text = prompts.GENRE_ESTIMATION_PROMPT_STRUCTURED.format(gcs_file_path=gcs_file_path)
-        messages = [SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED), HumanMessage(content=prompt_text)]
+        mime_type = self._get_mime_type_from_gcs_path(gcs_file_path)
+        prompt_text_content = prompts.GENRE_ESTIMATION_PROMPT_STRUCTURED
+        messages = [
+            SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED),
+            HumanMessage(content=[
+                prompt_text_content,
+                {
+                    "type": "media",
+                    "file_uri": gcs_file_path,
+                    "mime_type": mime_type,
+                }
+            ])
+        ]
         parsed_output: GenreOutput = await self._call_vertex_api(
-            llm, messages, task, {"gcs_file_path": gcs_file_path}, workflow_run_id, True, GenreOutput
+            llm, messages, task, {"gcs_file_path": gcs_file_path, "mime_type": mime_type}, workflow_run_id, True, GenreOutput
         )
         if not parsed_output.primary_genre or parsed_output.primary_genre == "Undetermined":
             logger.warning(f"[{task}] Vertex AI が未確定の主要ジャンルを返しました。")
@@ -167,15 +224,13 @@ class AudioAnalyzer:
 
     async def generate_backing_track(self, key: str, bpm: int, chords: List[str], genre: str, workflow_run_id: Optional[str]) -> str:
         task = "Backing Track Generation (MusicXML)"
-        llm = self._get_llm(task, for_generation=True)
+        llm = self._get_llm(task, for_generation=True) # こちらは音声入力ではないので変更なし
         chords_str = ", ".join(chords)
         prompt_text = prompts.BACKING_TRACK_GENERATION_PROMPT_TEMPLATE.format(key=key, bpm=bpm, chords_str=chords_str, genre=genre)
         messages = [SystemMessage(content=prompts.MUSIC_GENERATION_SYSTEM_PROMPT), HumanMessage(content=prompt_text)]
         request_params = {"key": key, "bpm": bpm, "chords": chords_str, "genre": genre}
         response: AIMessage = await self._call_vertex_api(llm, messages, task, request_params, workflow_run_id) # type: ignore
         content = response.content
-
-        logger.debug(f'LLM (Vertex AI) からのMusicXML用Rawコンテント: {str(content)[:500]}')
         if isinstance(content, str):
             match = re.search(r"MUSICXML_START\s*([\s\S]+?)\s*MUSICXML_END", content, re.DOTALL)
             if match:
@@ -260,7 +315,7 @@ async def node_aggregate_analysis_results(state: AudioAnalysisWorkflowState) -> 
                     chords=state.get("estimated_chords", []),
                     genre_by_ai=state.get("estimated_genre", "Undetermined")
                 )
-            except Exception as e:
+            except Exception as e: # Pydantic ValidationErrorなどもキャッチするため広めに
                 logger.error(f"AnalysisResult Pydanticモデルの作成エラー: {e}", exc_info=True, extra={"workflow_run_id": state.get("workflow_run_id")})
                 output["analysis_error"] = f"解析結果の最終処理に失敗しました: {str(e)}"
 
@@ -279,10 +334,17 @@ async def node_generate_backing_track(state: AudioAnalysisWorkflowState) -> Dict
         logger.warning(output["generation_error"], extra={"workflow_run_id": state.get("workflow_run_id")})
     else:
         try:
-            output["generated_backing_track_data"] = await audio_analyzer.generate_backing_track(
-                key=analysis_result.key, bpm=analysis_result.bpm, chords=analysis_result.chords,
-                genre=analysis_result.genre_by_ai, workflow_run_id=state.get("workflow_run_id")
-            )
+            # analysis_resultがNoneでないことは上でチェック済みだが、mypyのために再度確認
+            if analysis_result:
+                output["generated_backing_track_data"] = await audio_analyzer.generate_backing_track(
+                    key=analysis_result.key, bpm=analysis_result.bpm, chords=analysis_result.chords,
+                    genre=analysis_result.genre_by_ai, workflow_run_id=state.get("workflow_run_id")
+                )
+            else: # このブロックには通常到達しないはず
+                output["generation_error"] = "予期せぬエラー: analysis_resultがNoneです。"
+                logger.error(output["generation_error"], extra={"workflow_run_id": state.get("workflow_run_id")})
+
+
         except Exception as e:
             logger.error(f"Node {node_name} failed: {e}", exc_info=True, extra={"workflow_run_id": state.get("workflow_run_id")})
             output["generation_error"] = f"{node_name} failed: {str(e)}"
@@ -304,9 +366,21 @@ def build_workflow() -> StateGraph:
     workflow.add_node("handle_generation_error_node", lambda state: {"generation_handled": True, "generation_error": state.get("generation_error") or "Unknown generation error"})
 
     workflow.set_entry_point("entry_point")
-    workflow.add_conditional_edges("entry_point", lambda state: ["estimate_key_node", "estimate_bpm_node", "estimate_chords_node", "estimate_genre_node"])
+
+    # 並列実行を意図したエッジ設定
+    workflow.add_edge("entry_point", "estimate_key_node")
+    workflow.add_edge("entry_point", "estimate_bpm_node")
+    workflow.add_edge("entry_point", "estimate_chords_node")
+    workflow.add_edge("entry_point", "estimate_genre_node")
+
+    # 各解析ノードから集約ノードへのエッジ
+    # これらが全て完了してから aggregate_analysis_node に進むことを保証するには、
+    # LangGraph の join ノードのような仕組み、またはカスタムの同期ロジックが必要になる場合があります。
+    # ここでは、単純にエッジを追加します。LangGraph が依存関係をどう解決するかに注意が必要です。
+    # 通常、複数の入力を持つノードは、すべての入力エッジがトリガーされるのを待ちます。
     for node_name in ["estimate_key_node", "estimate_bpm_node", "estimate_chords_node", "estimate_genre_node"]:
         workflow.add_edge(node_name, "aggregate_analysis_node")
+
     workflow.add_conditional_edges("aggregate_analysis_node", lambda state: "handle_analysis_error_node" if state.get("analysis_error") else "generate_backing_track_node",
         {"generate_backing_track_node": "generate_backing_track_node", "handle_analysis_error_node": "handle_analysis_error_node"})
     workflow.add_edge("handle_analysis_error_node", END)
@@ -328,20 +402,35 @@ async def run_audio_analysis_workflow(gcs_file_path: str) -> AudioAnalysisWorkfl
         generation_error=None, final_analysis_result=None, analysis_handled=None, generation_handled=None,
         entry_point_completed=None
     )
-    final_state: AudioAnalysisWorkflowState = initial_state
+    final_state: AudioAnalysisWorkflowState = initial_state.copy() # type: ignore
+
     try:
-        config = {"recursion_limit": 15, "configurable": {"workflow_run_id": workflow_run_id}}
-        invoked_state = await app_graph.ainvoke(initial_state, config=config)
-        if isinstance(invoked_state, dict):
-            final_state = invoked_state
+        config = {"recursion_limit": 25, "configurable": {"workflow_run_id": workflow_run_id}} # 再帰制限を少し増やすことを検討
+        # LangGraph の ainvoke は状態の完全な辞書または変更差分を返すことがあります。
+        # 型安全のため、返り値を適切に処理します。
+        invoked_result = await app_graph.ainvoke(initial_state, config=config)
+
+        if isinstance(invoked_result, dict):
+            # LangGraph の多くのバージョンでは、最終状態の完全な辞書が返されます。
+            # TypedDict との互換性のために、キーが存在するか確認しながら代入するか、
+            # **invoked_result で展開して新しい TypedDict を作成するアプローチも取れます。
+            # ここでは、返された辞書のキーを AudioAnalysisWorkflowState のキーにマッピングします。
+            for key, value in invoked_result.items():
+                if key in AudioAnalysisWorkflowState.__annotations__:
+                    final_state[key] = value # type: ignore
+                else:
+                    logger.warning(f"ainvokeから予期しないキー '{key}' が返されました。")
         else:
-            logger.warning(f"app_graph.ainvoke returned an unexpected type: {type(invoked_state)}. Using initial state as fallback.")
+            logger.warning(f"app_graph.ainvoke returned an unexpected type: {type(invoked_result)}. Using initial state as fallback.")
             final_state["analysis_error"] = (final_state.get("analysis_error") or "") + " | Workflow invocation returned unexpected type."
+
     except Exception as e:
         logger.error(f"LangGraphワークフロー実行中の致命的エラー ({gcs_file_path}): {e}", exc_info=True, extra={"workflow_run_id": workflow_run_id})
         error_addon = f" | Workflow execution framework error: {type(e).__name__}: {e}"
-        final_state["analysis_error"] = (final_state.get("analysis_error") or "") + error_addon
-        final_state["generation_error"] = (final_state.get("generation_error") or "") + error_addon
+        current_analysis_error = final_state.get("analysis_error") or ""
+        final_state["analysis_error"] = current_analysis_error + error_addon # type: ignore
+        current_generation_error = final_state.get("generation_error") or ""
+        final_state["generation_error"] = current_generation_error + error_addon # type: ignore
 
     duration = time.time() - start_time_overall
     log_extra = {
@@ -350,13 +439,29 @@ async def run_audio_analysis_workflow(gcs_file_path: str) -> AudioAnalysisWorkfl
         "generation_data_present": bool(final_state.get("generated_backing_track_data")),
         "analysis_error": final_state.get("analysis_error"), "generation_error": final_state.get("generation_error"),
     }
-    if not final_state.get("final_analysis_result"):
+
+    final_analysis_result_obj = final_state.get("final_analysis_result")
+    generated_backing_track_data_val = final_state.get("generated_backing_track_data")
+
+    if not final_analysis_result_obj:
         detail = str(final_state.get('analysis_error', "ワークフローは解析結果を生成せずに終了しました。"))
         logger.error(f"音声解析失敗（結果欠落）: {detail}", extra=log_extra)
         raise AnalysisFailedException(message="音声解析が正常に完了しませんでした（結果欠落）。", detail=detail)
-    if not final_state.get("generated_backing_track_data"):
-        detail = str(final_state.get('generation_error', "ワークフローはバッキングトラックデータを生成せずに終了しました。"))
-        logger.error(f"バッキングトラック生成失敗（データ欠落）: {detail}", extra=log_extra)
-        raise GenerationFailedException(message="バッキングトラック生成が正常に完了しませんでした（データ欠落）。", detail=detail)
+
+    # final_analysis_result が存在しても、バッキングトラック生成が失敗するケースを考慮
+    if not generated_backing_track_data_val and not final_state.get("generation_error"):
+        # このケースは、生成ノード自体は成功したがデータが空だった、または後続の条件でENDにならなかった場合など、
+        # より詳細なエラーハンドリングが必要なシナリオを示唆する可能性があります。
+        # ここでは、データがない場合はエラーとして扱います。
+        generation_error_detail = "バッキングトラックデータが生成されませんでした。エラーメッセージはありません。"
+        logger.error(f"バッキングトラック生成失敗（データ欠落）: {generation_error_detail}", extra=log_extra)
+        raise GenerationFailedException(message="バッキングトラック生成が正常に完了しませんでした（データ欠落）。", detail=generation_error_detail)
+    elif not generated_backing_track_data_val and final_state.get("generation_error"):
+        # generation_error が設定されている場合は、それが主要なエラー情報
+        detail = str(final_state.get('generation_error'))
+        logger.error(f"バッキングトラック生成失敗（エラーあり）: {detail}", extra=log_extra)
+        raise GenerationFailedException(message="バッキングトラック生成が正常に完了しませんでした（エラーあり）。", detail=detail)
+
+
     logger.info(f"ワークフロー ({gcs_file_path}) 正常終了。", extra=log_extra)
     return final_state

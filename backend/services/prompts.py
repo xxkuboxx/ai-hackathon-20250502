@@ -10,30 +10,43 @@ AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED = """
 """
 
 KEY_ESTIMATION_PROMPT_STRUCTURED = """
-GCS URI: "{gcs_file_path}" にある音声ファイルに基づいて、楽曲のキーを推定してください。
-主要なキーと、その他考えられるキーを提示してください。
+あなたは高度な音楽分析能力を持つAIです。提供された音声ファイルを分析し、以下の指示に従って楽曲のキー（調）を特定し、報告してください。
+
+**依頼事項:**
+
+1.  **主要キーの特定:**
+    *   楽曲全体の主要なキーを、以下の英語表記で明確に特定してください。
+        *   **長調の例:** C Major, C# Major, Db Major, D Major, D# Major, Eb Major, E Major, F Major, F# Major, Gb Major, G Major, G# Major, Ab Major, A Major, A# Major, Bb Major, B Major
+        *   **短調の例:** A minor, A# minor, Bb minor, B minor, C minor, C# minor, Db minor, D minor, D# minor, Eb minor, E minor, F minor, F# minor, Gb minor, G minor, G# minor, Ab minor
+    *   **短調の種類:** 短調の場合、可能であれば種類（例: A natural minor, A harmonic minor, A melodic minor）についても言及してください。
+    *   **教会旋法:** 楽曲が特定の教会旋法に基づいていると強く判断される場合は、主音と旋法名で指摘してください（例: D Dorian, G Mixolydian）。
+        *   旋法の例: Ionian, Dorian, Phrygian, Lydian, Mixolydian, Aeolian, Locrian
+
+2.  **転調の扱い:**
+    *   楽曲中に転調がある場合は、**楽曲全体で最も演奏時間が長かったキー**を特定し、報告してください。
+
+**出力形式の希望:**
+
+*   特定されたキーのみを、依頼事項1で指定された英語表記で出力してください。
 """
 
 BPM_ESTIMATION_PROMPT_STRUCTURED = """
-GCS URI: "{gcs_file_path}" にある音声ファイルに基づいて、BPM（Beats Per Minute）を推定してください。
+添付した音声ファイルに基づいて、BPM（Beats Per Minute）を推定してください。
 整数値で提供してください。
 """
 
 CHORD_PROGRESSION_PROMPT_STRUCTURED = """
-GCS URI: "{gcs_file_path}" にある音声ファイルに基づいて、主要なコード進行を推定してください。
+添付した音声ファイルに基づいて、主要なコード進行を推定してください。
 コード文字列のリストで提供してください。
 """
 
 GENRE_ESTIMATION_PROMPT_STRUCTURED = """
-GCS URI: "{gcs_file_path}" にある音声ファイルに基づいて、音楽ジャンルを推定してください。
+添付した音声ファイルに基づいて、音楽ジャンルを推定してください。
 主要なジャンルと、その他考えられる副次的なジャンルを提示してください。
 """
 
 MUSIC_GENERATION_SYSTEM_PROMPT = """
 あなたは創造的なAI作曲家です。あなたのタスクは、提供された音楽パラメータに基づいて短いバッキングトラックを生成することです。
-出力は直接使用可能な音楽データであるべきで、理想的にはMP3形式で、rawバイトまたはbase64エンコードされた文字列として提供できる場合です。
-raw MP3データを生成できない場合は、その旨を明確に述べ、可能であれば代替の表現を提案してください。
-この演習では、MP3データを期待しています。
 """
 
 BACKING_TRACK_GENERATION_PROMPT_TEMPLATE = """

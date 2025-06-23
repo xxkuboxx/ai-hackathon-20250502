@@ -65,9 +65,8 @@ class ChatRequest(BaseModel):
 
 class ChordProgressionOutput(BaseModel):
     """AIが推定したコード進行を格納するモデル。"""
-    chords: List[str] = Field(description="推定されたコード進行のリスト。例: ['Am', 'G', 'C', 'F']")
-    # confidence: Optional[float] = Field(None, description="推定の信頼度 (0.0-1.0)", ge=0.0, le=1.0) # 必要なら追加
-    # reasoning: Optional[str] = Field(None, description="推定の根拠やAIの思考プロセス") # 必要なら追加
+    chords: List[str] = Field(description="推定されたコード進行のリスト。")
+
 
 class KeyOutput(BaseModel):
     primary_key: str = Field(description="最も可能性の高い主要なキー")
