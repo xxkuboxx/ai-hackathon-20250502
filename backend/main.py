@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from asgi_correlation_id import CorrelationIdMiddleware, correlation_id
 
 from config import settings
@@ -28,15 +29,23 @@ app = FastAPI(
 )
 
 # --- 3. ミドルウェア追加 ---
+# 3.1. CORS ミドルウェア (Flutter側からのリクエスト許可用)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 開発用: 本番環境では具体的なドメインを指定
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# 3.1. Correlation ID ミドルウェア (リクエスト追跡用)
+# 3.2. Correlation ID ミドルウェア (リクエスト追跡用)
 app.add_middleware(
     CorrelationIdMiddleware,
     header_name='X-Request-ID',
     generator=lambda: uuid4().hex,
 )
 
-# 3.2. カスタムロギングミドルウェア (詳細なリクエスト/レスポンスログ用)
+# 3.3. カスタムロギングミドルウェア (詳細なリクエスト/レスポンスログ用)
 @app.middleware("http")
 async def log_requests_middleware(request: Request, call_next):
     request_id = correlation_id.get()
