@@ -1,9 +1,11 @@
-import 'dart:typed_data';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 
-class WebAudioRecorder {
+class WebAudioRecorderWeb {
   Stream<List<double>> get audioDataStream => const Stream.empty();
+  Stream<bool> get playbackStateStream => const Stream.empty();
   bool get isRecording => false;
+  bool get isPlaying => false;
 
   Future<bool> checkPermission() async {
     return false;
@@ -15,6 +17,14 @@ class WebAudioRecorder {
 
   Future<Uint8List?> stopRecording() async {
     return null;
+  }
+
+  Future<void> playAudio(Uint8List audioData) async {
+    // スタブ実装
+  }
+
+  Future<void> stopAudio() async {
+    // スタブ実装
   }
 
   void dispose() {

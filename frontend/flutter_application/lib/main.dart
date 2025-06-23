@@ -593,18 +593,9 @@ class _MyHomePageState extends State<MyHomePage> {
       return;
     }
 
-    // Web版では音声再生機能は制限されているため、ファイル情報のみ表示
+    // Web版では独自の再生機能を使用
     if (isWeb) {
-      if (mounted && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Web版では音声ファイルの再生は制限されています。録音ファイル: ${_audioFilePath!.split('/').last}',
-            ),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
+      await _toggleWebPlayback();
       return;
     }
 
@@ -685,6 +676,74 @@ class _MyHomePageState extends State<MyHomePage> {
       }
     } catch (e) {
       if (kDebugMode) print('再生エラー: $e');
+      setState(() {
+        _isPlaying = false;
+      });
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('再生エラー: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleWebPlayback() async {
+    if (_webAudioRecorder == null) return;
+
+    try {
+      if (_isPlaying) {
+        // 停止
+        if (kDebugMode) print('Web音声再生を停止します');
+        await _webAudioRecorder.stopAudio();
+        setState(() {
+          _isPlaying = false;
+        });
+      } else {
+        // 再生開始
+        if (kDebugMode) print('Web音声再生を開始します');
+        final audioData = getWebAudioFile(_audioFilePath!);
+        if (audioData != null) {
+          // ユーザーアクションから直接呼び出すことで、ブラウザの自動再生制限を回避
+          setState(() {
+            _isPlaying = true;
+          });
+
+          // 再生完了を監視
+          _webAudioRecorder.playbackStateStream.listen((isPlaying) {
+            if (mounted) {
+              setState(() {
+                _isPlaying = isPlaying;
+              });
+            }
+          });
+
+          await _webAudioRecorder.playAudio(audioData);
+        } else {
+          if (mounted && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('録音データが見つかりません'),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+        }
+
+        // 音声再生確認メッセージ
+        if (mounted && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('録音データを再生中...'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) print('Web再生エラー: $e');
       setState(() {
         _isPlaying = false;
       });
@@ -953,7 +1012,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         child: Text(
                           _audioFilePath != null
                               ? (isWeb
-                                    ? 'Web版では波形表示は制限されています'
+                                    ? '録音データ: ${_audioFilePath!.split('/').last}'
                                     : '録音完了後に波形が表示されます')
                               : '録音完了後に波形が表示されます',
                           style: const TextStyle(
