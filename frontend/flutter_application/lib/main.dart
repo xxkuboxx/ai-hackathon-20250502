@@ -7,6 +7,8 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/foundation.dart';
 import 'file_operations_io.dart'
     if (dart.library.html) 'file_operations_web.dart';
+import 'web_audio_recorder.dart'
+    if (dart.library.io) 'web_audio_recorder_stub.dart';
 
 // 録音状態を管理するenum
 enum RecordingState {
@@ -66,7 +68,10 @@ class AudioProcessingService {
   static const String baseUrl =
       'https://sessionmuse-backend-469350304561.us-east5.run.app';
 
-  static Future<AudioAnalysisResult?> uploadAndProcess(String filePath) async {
+  static Future<AudioAnalysisResult?> uploadAndProcess(
+    String filePath, {
+    Uint8List? webAudioData,
+  }) async {
     try {
       var request = http.MultipartRequest(
         'POST',
@@ -74,7 +79,18 @@ class AudioProcessingService {
       );
 
       // ファイルを添付
-      var file = await http.MultipartFile.fromPath('file', filePath);
+      http.MultipartFile file;
+      if (webAudioData != null) {
+        // Web環境：バイトデータから直接作成
+        file = await createMultipartFileFromBytes(
+          'file',
+          filePath.split('/').last,
+          webAudioData,
+        );
+      } else {
+        // モバイル環境：ファイルパスから作成
+        file = await http.MultipartFile.fromPath('file', filePath);
+      }
       request.files.add(file);
 
       // リクエスト送信
@@ -86,11 +102,11 @@ class AudioProcessingService {
 
         return AudioAnalysisResult.fromJson(jsonData);
       } else {
-        print('API Error: ${response.statusCode}');
+        if (kDebugMode) print('API Error: ${response.statusCode}');
         return null;
       }
     } catch (e) {
-      print('Upload Error: $e');
+      if (kDebugMode) print('Upload Error: $e');
       return null;
     }
   }
@@ -115,8 +131,10 @@ class AudioProcessingService {
         };
       }
 
-      print('Sending chat request to: $baseUrl/api/chat');
-      print('Request body: ${json.encode(requestBody)}');
+      if (kDebugMode) {
+        print('Sending chat request to: $baseUrl/api/chat');
+        print('Request body: ${json.encode(requestBody)}');
+      }
 
       final response = await http.post(
         Uri.parse('$baseUrl/api/chat'),
@@ -127,21 +145,27 @@ class AudioProcessingService {
         body: json.encode(requestBody),
       );
 
-      print('Response status: ${response.statusCode}');
-      print('Response headers: ${response.headers}');
-      print('Response body: ${response.body}');
+      if (kDebugMode) {
+        print('Response status: ${response.statusCode}');
+        print('Response headers: ${response.headers}');
+        print('Response body: ${response.body}');
+      }
 
       if (response.statusCode == 200) {
         var jsonData = json.decode(response.body);
         return jsonData['content'];
       } else {
-        print('Chat API Error: ${response.statusCode}');
-        print('Response body: ${response.body}');
+        if (kDebugMode) {
+          print('Chat API Error: ${response.statusCode}');
+          print('Response body: ${response.body}');
+        }
         return null;
       }
     } catch (e) {
-      print('Chat Error: $e');
-      print('Error type: ${e.runtimeType}');
+      if (kDebugMode) {
+        print('Chat Error: $e');
+        print('Error type: ${e.runtimeType}');
+      }
       return null;
     }
   }
@@ -178,10 +202,11 @@ class _MyHomePageState extends State<MyHomePage> {
   String? _audioFilePath;
   late final RecorderController? _recorderController;
   late final PlayerController? playerController;
+  late final WebAudioRecorder? _webAudioRecorder;
 
   // プラットフォーム検出
   bool get isWeb => kIsWeb;
-  bool get isRecordingSupported => !kIsWeb;
+  bool get isRecordingSupported => true; // Web版でも録音機能をサポート
   final TextEditingController _messageController = TextEditingController();
   final List<ChatMessage> _messages = [];
   final List<ChatMessageModel> _chatHistory = [];
@@ -198,9 +223,6 @@ class _MyHomePageState extends State<MyHomePage> {
   // 録音状態管理
   RecordingState _recordingState = RecordingState.idle;
 
-  // 録音データ管理
-  List<double> _recordedWaveformData = [];
-
   // API分析結果
   AudioAnalysisResult? _analysisResult;
 
@@ -212,20 +234,25 @@ class _MyHomePageState extends State<MyHomePage> {
     super.initState();
 
     // プラットフォームに応じた初期化
-    if (isRecordingSupported) {
-      _recorderController = RecorderController();
-      playerController = PlayerController();
-      // アプリ起動時に録音権限を取得
-      _recorderController!.checkPermission();
-    } else {
+    if (isWeb) {
+      // Web環境
       _recorderController = null;
       playerController = null;
+      _webAudioRecorder = WebAudioRecorder();
+      // Web録音権限を取得
+      _webAudioRecorder!.checkPermission();
+    } else {
+      // モバイル環境
+      _recorderController = RecorderController();
+      playerController = PlayerController();
+      _webAudioRecorder = null;
+      // アプリ起動時に録音権限を取得
+      _recorderController!.checkPermission();
     }
 
     // 初期メッセージを追加
-    final initialMessage = isRecordingSupported
-        ? "こんにちは！音楽について何でも聞いてください。音声を録音して解析すると、より詳しいアドバイスができます。"
-        : "こんにちは！音楽について何でも聞いてください。（Web版では録音機能は利用できませんが、チャット機能は使用できます）";
+    final initialMessage =
+        "こんにちは！音楽について何でも聞いてください。音声を録音して解析すると、より詳しいアドバイスができます。";
 
     _messages.add(ChatMessage(text: initialMessage, isUser: false));
 
@@ -243,6 +270,7 @@ class _MyHomePageState extends State<MyHomePage> {
     super.dispose();
     _recorderController?.dispose();
     playerController?.dispose();
+    _webAudioRecorder?.dispose();
   }
 
   void _sendMessage() async {
@@ -327,45 +355,192 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
+  Future<void> _handleRecordingButtonPress() async {
+    if (_recordingState == RecordingState.idle) {
+      setState(() {
+        _recordingState = RecordingState.recording;
+        _isAnalyzed = true;
+      });
+      final recordingPath = await _setupRecording();
+      if (recordingPath != null) {
+        setState(() {
+          _audioFilePath = recordingPath;
+        });
+      }
+    } else {
+      setState(() {
+        _recordingState = RecordingState.uploading;
+      });
+      if (kDebugMode) print('録音停止中...');
+
+      if (isWeb) {
+        // Web環境での録音停止
+        final recordedData = await _webAudioRecorder!.stopRecording();
+        if (recordedData != null && _audioFilePath != null) {
+          // Web環境でのデータ保存
+          saveWebAudioFile(_audioFilePath!, recordedData);
+          if (kDebugMode) {
+            print('Web録音完了: $_audioFilePath (${recordedData.length} bytes)');
+          }
+          await _uploadAndAnalyze();
+        } else {
+          if (kDebugMode) print('Web録音データが取得できませんでした');
+          setState(() {
+            _recordingState = RecordingState.idle;
+          });
+        }
+      } else {
+        // モバイル環境での録音停止
+        final recordedFilePath = await _recorderController!.stop();
+        if (kDebugMode) print('録音停止結果: $recordedFilePath');
+
+        if (recordedFilePath != null) {
+          setState(() {
+            _audioFilePath = recordedFilePath;
+          });
+          if (kDebugMode) print('録音完了: $recordedFilePath');
+
+          if (await fileExists(recordedFilePath)) {
+            final fileSize = await getFileSize(recordedFilePath);
+            if (kDebugMode) print('録音ファイルサイズ: $fileSize bytes');
+          } else {
+            if (kDebugMode) print('録音ファイルが存在しません!');
+          }
+
+          await _uploadAndAnalyze();
+        } else {
+          if (kDebugMode) print('recordedFilePath is null!');
+          setState(() {
+            _recordingState = RecordingState.idle;
+          });
+        }
+      }
+      setState(() {
+        _isAnalyzed = true;
+      });
+    }
+  }
+
+  Widget _buildWaveformWidget() {
+    if (_recordingState == RecordingState.recording) {
+      if (!isWeb && _recorderController != null) {
+        return AudioWaveforms(
+          recorderController: _recorderController,
+          size: Size(MediaQuery.of(context).size.width - 80, 60),
+          waveStyle: const WaveStyle(
+            waveCap: StrokeCap.round,
+            extendWaveform: true,
+            showMiddleLine: false,
+          ),
+        );
+      } else {
+        return const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.mic, color: Colors.red, size: 24),
+              SizedBox(height: 4),
+              Text('録音中...', style: TextStyle(color: Colors.red, fontSize: 12)),
+            ],
+          ),
+        );
+      }
+    } else if (_recordingState == RecordingState.uploading) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.cloud_upload, color: Colors.blue, size: 24),
+            SizedBox(height: 8),
+            Text(
+              '音声解析中...',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Colors.blue,
+              ),
+            ),
+          ],
+        ),
+      );
+    } else {
+      return const Center(
+        child: Text(
+          '録音を開始すると波形が表示されます',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+      );
+    }
+  }
+
   Future<String?> _setupRecording() async {
-    if (!isRecordingSupported || _recorderController == null || kIsWeb) {
+    if (!isRecordingSupported) {
       return null;
     }
 
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final outputPath =
-          '${directory.path}/recorded_audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      if (isWeb) {
+        // Web環境での録音開始
+        final success = await _webAudioRecorder!.startRecording();
+        if (success) {
+          final outputPath =
+              'web_recorded_audio_${DateTime.now().millisecondsSinceEpoch}.wav';
+          if (kDebugMode) print('Web録音開始: $outputPath');
+          return outputPath;
+        } else {
+          if (kDebugMode) print('Web録音開始に失敗');
+          return null;
+        }
+      } else {
+        // モバイル環境での録音開始
+        final directory = await getApplicationDocumentsDirectory();
+        final outputPath =
+            '${directory.path}/recorded_audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
-      print('録音開始: $outputPath');
+        if (kDebugMode) print('録音開始: $outputPath');
 
-      // RecorderControllerで録音開始
-      await _recorderController!.record(
-        androidEncoder: AndroidEncoder.aac,
-        androidOutputFormat: AndroidOutputFormat.mpeg4,
-        path: outputPath,
-      );
+        // RecorderControllerで録音開始
+        await _recorderController!.record(
+          androidEncoder: AndroidEncoder.aac,
+          androidOutputFormat: AndroidOutputFormat.mpeg4,
+          path: outputPath,
+        );
 
-      print('録音が開始されました');
-      return outputPath;
+        if (kDebugMode) print('録音が開始されました');
+        return outputPath;
+      }
     } catch (e) {
-      print('録音設定エラー: $e');
+      if (kDebugMode) print('録音設定エラー: $e');
       return null;
     }
   }
 
   Future<void> _uploadAndAnalyze() async {
     if (_audioFilePath == null) {
-      print('音声ファイルが存在しません');
+      if (kDebugMode) print('音声ファイルが存在しません');
       return;
     }
 
-    print('API upload started: $_audioFilePath');
+    if (kDebugMode) print('API upload started: $_audioFilePath');
 
     try {
-      final result = await AudioProcessingService.uploadAndProcess(
-        _audioFilePath!,
-      );
+      AudioAnalysisResult? result;
+      if (isWeb) {
+        // Web環境：メモリ上のデータを使用
+        final webAudioData = getWebAudioFile(_audioFilePath!);
+        if (webAudioData != null) {
+          result = await AudioProcessingService.uploadAndProcess(
+            _audioFilePath!,
+            webAudioData: webAudioData,
+          );
+        } else {
+          if (kDebugMode) print('Web音声データが見つかりません');
+          return;
+        }
+      } else {
+        // モバイル環境：ファイルパスを使用
+        result = await AudioProcessingService.uploadAndProcess(_audioFilePath!);
+      }
 
       if (result != null) {
         setState(() {
@@ -397,7 +572,7 @@ class _MyHomePageState extends State<MyHomePage> {
         }
       }
     } catch (e) {
-      print('Upload error: $e');
+      if (kDebugMode) print('Upload error: $e');
       setState(() {
         _recordingState = RecordingState.idle;
       });
@@ -414,17 +589,25 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _togglePlayback() async {
-    if (!isRecordingSupported ||
-        playerController == null ||
-        _audioFilePath == null) {
+    if (_audioFilePath == null) {
       return;
     }
 
-    print('音声ファイルパス: $_audioFilePath');
+    // Web版では独自の再生機能を使用
+    if (isWeb) {
+      await _toggleWebPlayback();
+      return;
+    }
+
+    if (playerController == null) {
+      return;
+    }
+
+    if (kDebugMode) print('音声ファイルパス: $_audioFilePath');
 
     // ファイルの存在確認
     if (!await fileExists(_audioFilePath!)) {
-      print('音声ファイルが存在しません: $_audioFilePath');
+      if (kDebugMode) print('音声ファイルが存在しません: $_audioFilePath');
       if (mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -437,27 +620,27 @@ class _MyHomePageState extends State<MyHomePage> {
     }
 
     final fileSize = await getFileSize(_audioFilePath!);
-    print('ファイルサイズ: $fileSize bytes');
+    if (kDebugMode) print('ファイルサイズ: $fileSize bytes');
 
     try {
       if (_isPlaying) {
         // 停止
-        print('音声再生を停止します');
+        if (kDebugMode) print('音声再生を停止します');
         await playerController!.stopPlayer();
         setState(() {
           _isPlaying = false;
         });
-        print('音声再生が停止されました');
+        if (kDebugMode) print('音声再生が停止されました');
       } else {
         // 再生開始前にPlayerControllerをリセット
-        print('音声再生を開始します');
+        if (kDebugMode) print('音声再生を開始します');
 
         // 既存の再生を完全に停止してリセット
         try {
           await playerController!.stopPlayer();
-          print('既存の再生を停止しました');
+          if (kDebugMode) print('既存の再生を停止しました');
         } catch (e) {
-          print('停止時エラー（無視可能）: $e');
+          if (kDebugMode) print('停止時エラー（無視可能）: $e');
         }
 
         // プレイヤーを準備
@@ -465,23 +648,23 @@ class _MyHomePageState extends State<MyHomePage> {
           path: _audioFilePath!,
           shouldExtractWaveform: true,
         );
-        print('プレイヤーの準備が完了しました');
+        if (kDebugMode) print('プレイヤーの準備が完了しました');
 
         // リスナーを一度だけ追加
         if (!_playerListenerAdded) {
           playerController!.onPlayerStateChanged.listen((state) {
-            print('プレイヤー状態変更: \\${state.toString()}');
+            if (kDebugMode) print('プレイヤー状態変更: \\${state.toString()}');
             if (state.isPaused || state.isStopped) {
               if (mounted) {
                 setState(() {
                   _isPlaying = false;
                 });
-                print('再生状態をfalseに更新しました');
+                if (kDebugMode) print('再生状態をfalseに更新しました');
               }
             }
           });
           _playerListenerAdded = true;
-          print('プレイヤーリスナーを追加しました');
+          if (kDebugMode) print('プレイヤーリスナーを追加しました');
         }
 
         // 再生開始
@@ -489,10 +672,78 @@ class _MyHomePageState extends State<MyHomePage> {
         setState(() {
           _isPlaying = true;
         });
-        print('音声再生が開始されました');
+        if (kDebugMode) print('音声再生が開始されました');
       }
     } catch (e) {
-      print('再生エラー: $e');
+      if (kDebugMode) print('再生エラー: $e');
+      setState(() {
+        _isPlaying = false;
+      });
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('再生エラー: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleWebPlayback() async {
+    if (_webAudioRecorder == null) return;
+
+    try {
+      if (_isPlaying) {
+        // 停止
+        if (kDebugMode) print('Web音声再生を停止します');
+        await _webAudioRecorder.stopAudio();
+        setState(() {
+          _isPlaying = false;
+        });
+      } else {
+        // 再生開始
+        if (kDebugMode) print('Web音声再生を開始します');
+        final audioData = getWebAudioFile(_audioFilePath!);
+        if (audioData != null) {
+          // ユーザーアクションから直接呼び出すことで、ブラウザの自動再生制限を回避
+          setState(() {
+            _isPlaying = true;
+          });
+
+          // 再生完了を監視
+          _webAudioRecorder.playbackStateStream.listen((isPlaying) {
+            if (mounted) {
+              setState(() {
+                _isPlaying = isPlaying;
+              });
+            }
+          });
+
+          await _webAudioRecorder.playAudio(audioData);
+        } else {
+          if (mounted && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('録音データが見つかりません'),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+        }
+
+        // 音声再生確認メッセージ
+        if (mounted && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('録音データを再生中...'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) print('Web再生エラー: $e');
       setState(() {
         _isPlaying = false;
       });
@@ -515,7 +766,9 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    print('Build called with _recordingState: $_recordingState');
+    if (kDebugMode) {
+      print('Build called with _recordingState: $_recordingState');
+    }
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
@@ -630,89 +883,19 @@ class _MyHomePageState extends State<MyHomePage> {
                               ? Colors.red
                               : Colors.blue),
                   ),
-                  onPressed: !isRecordingSupported
+                  onPressed: _recordingState == RecordingState.uploading
                       ? null
-                      : (_recordingState == RecordingState.uploading
-                            ? null
-                            : () async {
-                                if (_recordingState == RecordingState.idle) {
-                                  setState(() {
-                                    _recordingState = RecordingState.recording;
-                                    _isAnalyzed = true;
-                                  });
-                                  final recordingPath = await _setupRecording();
-                                  if (recordingPath != null) {
-                                    setState(() {
-                                      _audioFilePath = recordingPath;
-                                    });
-                                  }
-                                } else {
-                                  setState(() {
-                                    _recordingState = RecordingState.uploading;
-                                  });
-                                  print('録音停止中...');
-                                  final recordedFilePath =
-                                      await _recorderController!.stop();
-                                  print('録音停止結果: $recordedFilePath');
-
-                                  if (recordedFilePath != null) {
-                                    setState(() {
-                                      _audioFilePath = recordedFilePath;
-                                    });
-                                    print('録音完了: $recordedFilePath');
-
-                                    if (await fileExists(recordedFilePath)) {
-                                      final fileSize = await getFileSize(
-                                        recordedFilePath,
-                                      );
-                                      print('録音ファイルサイズ: $fileSize bytes');
-                                    } else {
-                                      print('録音ファイルが存在しません!');
-                                    }
-
-                                    await _uploadAndAnalyze();
-                                  } else {
-                                    print('recordedFilePath is null!');
-                                    setState(() {
-                                      _recordingState = RecordingState.idle;
-                                    });
-                                  }
-                                  setState(() {
-                                    _isAnalyzed = true;
-                                  });
-                                }
-                              }),
-                  style: IconButton.styleFrom(
-                    backgroundColor: _recordingState == RecordingState.uploading
-                        ? Colors.grey.shade200
-                        : (_recordingState == RecordingState.recording
-                              ? Colors.red.shade100
-                              : Colors.blue.shade100),
-                    side: BorderSide(
-                      color: _recordingState == RecordingState.uploading
-                          ? Colors.grey
-                          : (_recordingState == RecordingState.recording
-                                ? Colors.red.shade300
-                                : Colors.blue.shade300),
-                      width: 1.5,
-                    ),
-                  ),
+                      : _handleRecordingButtonPress,
                 ),
               ),
               const SizedBox(width: 8),
               Text(
-                !isRecordingSupported
-                    ? 'Web版では利用不可'
-                    : (_recordingState == RecordingState.recording
-                          ? '録音中'
-                          : '録音開始'),
+                _recordingState == RecordingState.recording ? '録音中' : '録音開始',
                 style: TextStyle(
                   fontSize: 12,
-                  color: !isRecordingSupported
-                      ? Colors.grey.shade400
-                      : (_recordingState == RecordingState.recording
-                            ? Colors.red
-                            : Colors.grey),
+                  color: _recordingState == RecordingState.recording
+                      ? Colors.red
+                      : Colors.grey,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -726,74 +909,7 @@ class _MyHomePageState extends State<MyHomePage> {
               borderRadius: BorderRadius.circular(8.0),
               border: Border.all(color: Colors.grey.shade300, width: 1.0),
             ),
-            child: _recordingState == RecordingState.recording
-                ? (isRecordingSupported && _recorderController != null
-                      ? AudioWaveforms(
-                          recorderController: _recorderController!,
-                          size: Size(
-                            MediaQuery.of(context).size.width - 80,
-                            60,
-                          ),
-                          waveStyle: const WaveStyle(
-                            waveCap: StrokeCap.round,
-                            extendWaveform: true,
-                            showMiddleLine: false,
-                          ),
-                        )
-                      : const Center(
-                          child: Text(
-                            'Web版では波形表示は利用できません',
-                            style: TextStyle(color: Colors.grey, fontSize: 12),
-                          ),
-                        ))
-                : _recordingState == RecordingState.uploading
-                ? const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.cloud_upload, color: Colors.blue, size: 24),
-                        SizedBox(height: 8),
-                        Text(
-                          '音声解析中...',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.blue,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                : (_recordingState == RecordingState.idle)
-                ? const Center(
-                    child: Text(
-                      '録音を開始すると波形が表示されます',
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
-                  )
-                : (isRecordingSupported &&
-                          playerController != null &&
-                          _recordedWaveformData.isNotEmpty
-                      ? AudioFileWaveforms(
-                          playerController: playerController!,
-                          size: Size(
-                            MediaQuery.of(context).size.width - 80,
-                            60,
-                          ),
-                          waveformData: _recordedWaveformData,
-                          playerWaveStyle: const PlayerWaveStyle(
-                            seekLineColor: Colors.blue,
-                            showSeekLine: true,
-                            waveCap: StrokeCap.round,
-                          ),
-                          waveformType: WaveformType.fitWidth,
-                        )
-                      : const Center(
-                          child: Text(
-                            '録音を開始すると波形が表示されます',
-                            style: TextStyle(color: Colors.grey, fontSize: 12),
-                          ),
-                        )),
+            child: _buildWaveformWidget(),
           ),
           const SizedBox(height: 16),
         ],
@@ -881,9 +997,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   border: Border.all(color: Colors.grey.shade300, width: 1.0),
                 ),
                 child:
-                    _audioFilePath != null &&
-                        isRecordingSupported &&
-                        playerController != null
+                    _audioFilePath != null && !isWeb && playerController != null
                     ? AudioFileWaveforms(
                         playerController: playerController!,
                         size: Size(MediaQuery.of(context).size.width - 80, 60),
@@ -896,9 +1010,11 @@ class _MyHomePageState extends State<MyHomePage> {
                       )
                     : Center(
                         child: Text(
-                          isRecordingSupported
-                              ? '録音完了後に波形が表示されます'
-                              : 'Web版では録音機能は利用できません',
+                          _audioFilePath != null
+                              ? (isWeb
+                                    ? '録音データ: ${_audioFilePath!.split('/').last}'
+                                    : '録音完了後に波形が表示されます')
+                              : '録音完了後に波形が表示されます',
                           style: const TextStyle(
                             color: Colors.grey,
                             fontSize: 12,
@@ -911,16 +1027,13 @@ class _MyHomePageState extends State<MyHomePage> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   IconButton(
-                    onPressed: _audioFilePath != null && isRecordingSupported
-                        ? _togglePlayback
-                        : null,
+                    onPressed: _audioFilePath != null ? _togglePlayback : null,
                     icon: Icon(
                       _isPlaying ? Icons.stop : Icons.play_arrow,
                       color: Colors.white,
                     ),
                     style: IconButton.styleFrom(
-                      backgroundColor:
-                          _audioFilePath != null && isRecordingSupported
+                      backgroundColor: _audioFilePath != null
                           ? (_isPlaying ? Colors.red : Colors.green)
                           : Colors.grey,
                       padding: const EdgeInsets.all(12),
@@ -928,13 +1041,13 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                   const SizedBox(width: 16),
                   IconButton(
-                    onPressed: _audioFilePath != null && isRecordingSupported
+                    onPressed: _audioFilePath != null
                         ? () {
                             if (mounted && context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
-                                    '音声ファイルが保存されました: \\${_audioFilePath!.split('/').last}',
+                                    '音声ファイルが保存されました: ${_audioFilePath!.split('/').last}',
                                   ),
                                   duration: const Duration(seconds: 3),
                                 ),
@@ -944,8 +1057,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         : null,
                     icon: const Icon(Icons.download, color: Colors.blue),
                     style: IconButton.styleFrom(
-                      backgroundColor:
-                          _audioFilePath != null && isRecordingSupported
+                      backgroundColor: _audioFilePath != null
                           ? Colors.blue.shade50
                           : Colors.grey.shade200,
                       padding: const EdgeInsets.all(12),
