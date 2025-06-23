@@ -39,6 +39,25 @@ class AudioAnalysisResult {
   }
 }
 
+// チャットメッセージモデル
+class ChatMessageModel {
+  final String role;
+  final String content;
+
+  ChatMessageModel({required this.role, required this.content});
+
+  Map<String, dynamic> toJson() {
+    return {'role': role, 'content': content};
+  }
+
+  factory ChatMessageModel.fromJson(Map<String, dynamic> json) {
+    return ChatMessageModel(
+      role: json['role'] ?? 'assistant',
+      content: json['content'] ?? '',
+    );
+  }
+}
+
 // APIサービスクラス
 class AudioProcessingService {
   static const String baseUrl =
@@ -69,6 +88,46 @@ class AudioProcessingService {
       }
     } catch (e) {
       print('Upload Error: $e');
+      return null;
+    }
+  }
+
+  // AIチャット機能
+  static Future<String?> sendChatMessage(
+    List<ChatMessageModel> messages,
+    AudioAnalysisResult? analysisContext,
+  ) async {
+    try {
+      Map<String, dynamic> requestBody = {
+        'messages': messages.map((msg) => msg.toJson()).toList(),
+      };
+
+      // 音楽解析結果があれば追加
+      if (analysisContext != null) {
+        requestBody['analysis_context'] = {
+          'key': analysisContext.key,
+          'bpm': analysisContext.bpm,
+          'chords': analysisContext.chords,
+          'genre': analysisContext.genre,
+        };
+      }
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/chat'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode(requestBody),
+      );
+
+      if (response.statusCode == 200) {
+        var jsonData = json.decode(response.body);
+        return jsonData['content'];
+      } else {
+        print('Chat API Error: ${response.statusCode}');
+        print('Response body: ${response.body}');
+        return null;
+      }
+    } catch (e) {
+      print('Chat Error: $e');
       return null;
     }
   }
@@ -107,7 +166,9 @@ class _MyHomePageState extends State<MyHomePage> {
   final PlayerController playerController = PlayerController();
   final TextEditingController _messageController = TextEditingController();
   final List<ChatMessage> _messages = [];
+  final List<ChatMessageModel> _chatHistory = [];
   final ScrollController _scrollController = ScrollController();
+  bool _isLoadingResponse = false;
 
   // 状態管理
   bool _isAnalyzed = false;
@@ -132,7 +193,20 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
     // 初期メッセージを追加
-    _messages.add(ChatMessage(text: "こんにちは！音楽について何でも聞いてください。", isUser: false));
+    _messages.add(
+      ChatMessage(
+        text: "こんにちは！音楽について何でも聞いてください。音声を録音して解析すると、より詳しいアドバイスができます。",
+        isUser: false,
+      ),
+    );
+
+    // チャット履歴にも初期メッセージを追加
+    _chatHistory.add(
+      ChatMessageModel(
+        role: 'assistant',
+        content: "こんにちは！音楽について何でも聞いてください。音声を録音して解析すると、より詳しいアドバイスができます。",
+      ),
+    );
 
     // 初期状態で解析結果を表示
     _isAnalyzed = true;
@@ -148,27 +222,76 @@ class _MyHomePageState extends State<MyHomePage> {
     playerController.dispose();
   }
 
-  void _sendMessage() {
-    if (_messageController.text.trim().isNotEmpty) {
-      setState(() {
-        _messages.add(ChatMessage(text: _messageController.text, isUser: true));
-        // AIの応答をシミュレート
-        _messages.add(
-          ChatMessage(text: "ありがとうございます。音楽について詳しく教えてください。", isUser: false),
+  void _sendMessage() async {
+    if (_messageController.text.trim().isEmpty || _isLoadingResponse) {
+      return;
+    }
+
+    final userMessage = _messageController.text.trim();
+    _messageController.clear();
+
+    setState(() {
+      _messages.add(ChatMessage(text: userMessage, isUser: true));
+      _isLoadingResponse = true;
+    });
+
+    // チャット履歴に追加
+    _chatHistory.add(ChatMessageModel(role: 'user', content: userMessage));
+
+    // スクロールを最下部に移動
+    _scrollToBottom();
+
+    try {
+      // AI APIを呼び出し
+      final aiResponse = await AudioProcessingService.sendChatMessage(
+        _chatHistory,
+        _analysisResult,
+      );
+
+      if (aiResponse != null && aiResponse.isNotEmpty) {
+        setState(() {
+          _messages.add(ChatMessage(text: aiResponse, isUser: false));
+          _isLoadingResponse = false;
+        });
+
+        // チャット履歴に追加
+        _chatHistory.add(
+          ChatMessageModel(role: 'assistant', content: aiResponse),
         );
-      });
-      _messageController.clear();
-      // スクロールを最下部に移動
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
+      } else {
+        setState(() {
+          _messages.add(
+            ChatMessage(
+              text: "申し訳ありません。現在AIサービスに接続できません。しばらく後にもう一度お試しください。",
+              isUser: false,
+            ),
           );
-        }
+          _isLoadingResponse = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _messages.add(
+          ChatMessage(text: "エラーが発生しました: ${e.toString()}", isUser: false),
+        );
+        _isLoadingResponse = false;
       });
     }
+
+    // スクロールを最下部に移動
+    _scrollToBottom();
+  }
+
+  void _scrollToBottom() {
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   Future<String?> _setupRecording() async {
@@ -397,15 +520,20 @@ class _MyHomePageState extends State<MyHomePage> {
           _buildChatOverlay(),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _toggleChat,
-        backgroundColor: Colors.purple,
-        icon: const Icon(Icons.chat_bubble, color: Colors.white),
-        label: const Text(
-          'AIと相談',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-      ),
+      floatingActionButton: _isChatOpen
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _toggleChat,
+              backgroundColor: Colors.purple,
+              icon: const Icon(Icons.chat_bubble, color: Colors.white),
+              label: const Text(
+                'AIと相談',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
@@ -484,7 +612,8 @@ class _MyHomePageState extends State<MyHomePage> {
                               _recordingState = RecordingState.uploading;
                             });
                             print('録音停止中...');
-                            final recordedFilePath = await _recorderController.stop();
+                            final recordedFilePath = await _recorderController
+                                .stop();
                             print('録音停止結果: $recordedFilePath');
 
                             if (recordedFilePath != null) {
@@ -797,8 +926,62 @@ class _MyHomePageState extends State<MyHomePage> {
             child: ListView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.all(16.0),
-              itemCount: _messages.length,
+              itemCount: _messages.length + (_isLoadingResponse ? 1 : 0),
               itemBuilder: (context, index) {
+                // ローディングインジケーターを表示
+                if (index == _messages.length && _isLoadingResponse) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      children: [
+                        CircleAvatar(
+                          backgroundColor: Colors.purple.shade200,
+                          child: const Icon(
+                            Icons.smart_toy,
+                            color: Colors.purple,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.all(12.0),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16.0),
+                            border: Border.all(
+                              color: Colors.grey.shade300,
+                              width: 1.0,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.purple.shade300,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                "AI が考えています...",
+                                style: TextStyle(
+                                  color: Colors.black54,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
                 final message = _messages[index];
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12.0),
@@ -881,11 +1064,24 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
                 const SizedBox(width: 8),
                 IconButton(
-                  onPressed: _sendMessage,
-                  icon: const Icon(Icons.send),
-                  color: Colors.purple,
+                  onPressed: _isLoadingResponse ? null : _sendMessage,
+                  icon: _isLoadingResponse
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.purple.shade300,
+                            ),
+                          ),
+                        )
+                      : const Icon(Icons.send),
+                  color: _isLoadingResponse ? Colors.grey : Colors.purple,
                   style: IconButton.styleFrom(
-                    backgroundColor: Colors.purple.shade100,
+                    backgroundColor: _isLoadingResponse
+                        ? Colors.grey.shade100
+                        : Colors.purple.shade100,
                   ),
                 ),
               ],
