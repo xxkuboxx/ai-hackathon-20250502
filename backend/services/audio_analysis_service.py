@@ -7,42 +7,38 @@ import os # os.path.splitext を使用するために追加
 from typing import TypedDict, List, Dict, Any, Optional, Union
 
 from langgraph.graph import StateGraph, END
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessageChunk
-from langchain_core.exceptions import OutputParserException
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessageChunk # BaseMessageChunk はストリーミングで利用
+from langchain_core.exceptions import OutputParserException # 構造化出力のエラー処理に利用
 from langchain_google_vertexai import ChatVertexAI, HarmCategory, HarmBlockThreshold
 
-from models import AnalysisResult, ErrorCode, ChordProgressionOutput, KeyOutput, BpmOutput, GenreOutput
+# models から AnalysisResult と ErrorCode をインポート (ChordProgressionOutput などは削除)
+from models import AnalysisResult, ErrorCode
 from exceptions import AnalysisFailedException, GenerationFailedException, VertexAIAPIErrorException
 from config import settings
 from services import prompts
 
 logger = logging.getLogger(__name__)
 
+# AudioAnalysisWorkflowState を新しい仕様に合わせて変更
 class AudioAnalysisWorkflowState(TypedDict):
-    gcs_file_path: str
-    workflow_run_id: Optional[str]
-    estimated_key: Optional[str]
-    key_estimation_error: Optional[str]
-    estimated_bpm: Optional[int]
-    bpm_estimation_error: Optional[str]
-    estimated_chords: Optional[List[str]]
-    chords_estimation_error: Optional[str]
-    estimated_genre: Optional[str]
-    genre_estimation_error: Optional[str]
-    analysis_error: Optional[str] # Aggregated error from analysis steps
-    generated_backing_track_data: Optional[str]
-    generation_error: Optional[str]
+    gcs_file_path: str # 入力音声ファイルのGCSパス
+    workflow_run_id: Optional[str] # ワークフロー実行の一意なID
+    humming_analysis_theme: Optional[str] # 口ずさみ解析で得られた「トラックの雰囲気/テーマ」
+    humming_analysis_error: Optional[str] # 口ずさみ解析ステップでのエラーメッセージ
+    generated_musicxml_data: Optional[str] # 生成されたMusicXMLデータ
+    musicxml_generation_error: Optional[str] # MusicXML生成ステップでのエラーメッセージ
+    # final_analysis_result はチャット連携用に「トラックの雰囲気/テーマ」を保持する AnalysisResult オブジェクト
     final_analysis_result: Optional[AnalysisResult]
-    # Flags to indicate if error handlers were executed (optional, for more complex logic)
-    analysis_handled: Optional[bool]
-    generation_handled: Optional[bool]
-    entry_point_completed: Optional[bool]
-
+    analysis_handled: Optional[bool] # 解析エラーが処理されたかどうかのフラグ
+    generation_handled: Optional[bool] # 生成エラーが処理されたかどうかのフラグ
+    entry_point_completed: Optional[bool] # エントリーポイントが完了したかどうかのフラグ
 
 class AudioAnalyzer:
-    def __init__(self, location: str = settings.VERTEX_AI_LOCATION, model_name: str = settings.GEMINI_MODEL_NAME, timeout: int = settings.VERTEX_AI_TIMEOUT_SECONDS):
+    # model_name のデフォルトを GEMINI_FLASH_MODEL_NAME に変更 (settingsに追加想定)
+    def __init__(self, location: str = settings.VERTEX_AI_LOCATION, model_name: str = settings.GEMINI_FLASH_MODEL_NAME, timeout: int = settings.VERTEX_AI_TIMEOUT_SECONDS):
         self.location = location
-        self.model_name = model_name
+        # self.model_name はメソッド呼び出し時に指定するため、ここでは初期化不要かもしれないが、互換性のため残す
+        self.default_model_name = model_name
         self.timeout = timeout
         self.safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
@@ -51,21 +47,22 @@ class AudioAnalyzer:
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
         }
 
-    def _get_llm(self, task_description: str, for_generation: bool = False) -> ChatVertexAI:
+    # _get_llm メソッドを、モデル名を引数で受け取れるように変更
+    def _get_llm(self, task_description: str, model_name: str, for_generation: bool = False) -> ChatVertexAI:
         try:
-            temperature = 0.7 if for_generation else 0.3
+            temperature = 0.7 if for_generation else 0.3 # 解析と生成で温度を調整
             llm = ChatVertexAI(
                 location=self.location,
-                model_name=self.model_name,
+                model_name=model_name, # 引数で受け取ったモデル名を使用
                 temperature=temperature,
                 request_timeout=self.timeout,
                 safety_settings=self.safety_settings,
             )
-            logger.info(f"'{task_description}'用ChatVertexAIをモデル'{self.model_name}', Location: {self.location})で初期化しました。")
+            logger.info(f"'{task_description}'用ChatVertexAIをモデル'{model_name}', Location: {self.location})で初期化しました。")
             return llm
         except Exception as e:
-            logger.error(f"ChatVertexAIの初期化に失敗しました ('{task_description}'): {e}", exc_info=True)
-            raise VertexAIAPIErrorException(message=f"Vertex AI LLMの初期化に失敗しました ('{task_description}')。", detail=str(e), error_code=ErrorCode.VERTEX_AI_API_ERROR)
+            logger.error(f"ChatVertexAIの初期化に失敗しました ('{task_description}', Model: {model_name}): {e}", exc_info=True)
+            raise VertexAIAPIErrorException(message=f"Vertex AI LLMの初期化に失敗しました ('{task_description}', Model: {model_name})。", detail=str(e), error_code=ErrorCode.VERTEX_AI_API_ERROR)
 
     def _get_mime_type_from_gcs_path(self, gcs_file_path: str) -> str:
         """GCSファイルパスからMIMEタイプを推測するヘルパー関数"""
@@ -75,44 +72,53 @@ class AudioAnalyzer:
         elif ext == ".wav":
             return "audio/wav"
         else:
-            # 不明な場合はデフォルトで mpeg を試すか、エラーを出すか、設定に依存
-            logger.warning(f"不明なファイル拡張子 '{ext}' のため、MIMEタイプを 'audio/mpeg' とします。GCSパス: {gcs_file_path}")
-            return "audio/mpeg" # または適切なデフォルト/フォールバック
+            logger.warning(f"不明なファイル拡張子 '{ext}' のため、MIMEタイプを 'audio/mpeg' とします（フォールバック）。GCSパス: {gcs_file_path}")
+            return "audio/mpeg" # フォールバックとしてMPEGを指定
 
+    # _call_vertex_api メソッドの is_structured_output と output_schema は今回不要なので削除またはデフォルトをFalseに
     async def _call_vertex_api(
         self,
         llm: ChatVertexAI,
         messages: List[Union[SystemMessage, HumanMessage, AIMessage]],
         task_description: str,
-        request_params: Dict[str, Any],
+        request_params: Dict[str, Any], # ログ記録用
         workflow_run_id: Optional[str] = None,
-        is_structured_output: bool = False,
-        output_schema: Optional[Any] = None
-    ) -> Union[AIMessage, Any]:
+        # is_structured_output: bool = False, # 今回は不要
+        # output_schema: Optional[Any] = None # 今回は不要
+    ) -> AIMessage: # AIMessage を直接返すように変更 (テキスト応答を期待)
         api_call_start_time = time.time()
         try:
-            target_llm = llm.with_structured_output(output_schema, include_raw=False) if is_structured_output and output_schema else llm
-            response_data = await target_llm.ainvoke(messages)
+            # target_llm = llm.with_structured_output(output_schema, include_raw=False) if is_structured_output and output_schema else llm
+            # 今回は構造化出力は使用しないため、そのまま llm を使用
+            response_data = await llm.ainvoke(messages)
             api_call_duration = time.time() - api_call_start_time
 
             log_extra = {
-                "target_service": "VertexAI", "vertex_model": self.model_name,
+                "target_service": "VertexAI", "vertex_model": llm.model_name, # llmオブジェクトからモデル名を取得
                 "task": task_description, "duration_seconds": api_call_duration,
                 "request_params": request_params, "workflow_run_id": workflow_run_id,
             }
-            if is_structured_output and hasattr(response_data, 'model_dump'):
-                log_extra["parsed_output"] = response_data.model_dump()
-            elif isinstance(response_data, AIMessage) and response_data.content:
+            # if is_structured_output and hasattr(response_data, 'model_dump'): # 構造化出力のログは削除
+            #     log_extra["parsed_output"] = response_data.model_dump()
+            if isinstance(response_data, AIMessage) and response_data.content:
                 log_extra["response_content_length"] = len(str(response_data.content))
 
             logger.info(f"Vertex AI API呼び出し成功 ({task_description})", extra=log_extra)
+
+            if not isinstance(response_data, AIMessage):
+                 logger.error(f"Vertex AIからの応答が予期しない型です: {type(response_data)} ({task_description})")
+                 raise VertexAIAPIErrorException(message=f"{task_description}: Vertex AIからの応答が予期しない型です。", error_code=ErrorCode.VERTEX_AI_API_ERROR)
+            if not response_data.content or not isinstance(response_data.content, str):
+                logger.error(f"Vertex AIからの応答内容が空または文字列ではありません: {response_data.content} ({task_description})")
+                raise VertexAIAPIErrorException(message=f"{task_description}: Vertex AIからの応答内容が空または不正です。", error_code=ErrorCode.VERTEX_AI_API_ERROR)
+
             return response_data
         except Exception as e:
             api_call_duration = time.time() - api_call_start_time
             logger.error(
                 f"Vertex AI API呼び出し失敗 ({task_description})", exc_info=True,
                 extra={
-                    "target_service": "VertexAI", "vertex_model": self.model_name,
+                    "target_service": "VertexAI", "vertex_model": llm.model_name,
                     "task": task_description, "duration_seconds": api_call_duration,
                     "request_params": request_params, "workflow_run_id": workflow_run_id,
                     "error_type": type(e).__name__,
@@ -122,19 +128,26 @@ class AudioAnalyzer:
                 raise VertexAIAPIErrorException(message=f"{task_description}リクエストが安全フィルターでブロックされた可能性があります (Vertex AI)。", detail=str(e), error_code=ErrorCode.VERTEX_AI_API_ERROR)
             if isinstance(e, asyncio.TimeoutError):
                 raise VertexAIAPIErrorException(message=f"{task_description}がタイムアウトしました (Vertex AI)。", detail=str(e), error_code=ErrorCode.VERTEX_AI_API_ERROR)
-            if isinstance(e, OutputParserException):
-                 raise AnalysisFailedException(message=f"{task_description}: AIの応答形式が不正でパースできませんでした (Vertex AI)。", detail=getattr(e, 'llm_output', str(e)))
+            # OutputParserException は構造化出力用なので、ここでは不要
+            # if isinstance(e, OutputParserException):
+            #      raise AnalysisFailedException(message=f"{task_description}: AIの応答形式が不正でパースできませんでした (Vertex AI)。", detail=getattr(e, 'llm_output', str(e)))
+            if isinstance(e, VertexAIAPIErrorException): # 既にカスタム例外ならそのままraise
+                raise
             raise VertexAIAPIErrorException(message=f"{task_description}中にエラーが発生しました (Vertex AI)。", detail=str(e), error_code=ErrorCode.VERTEX_AI_API_ERROR)
 
-    async def estimate_key(self, gcs_file_path: str, workflow_run_id: Optional[str]) -> str:
-        task = "Key Estimation (Structured)"
-        llm = self._get_llm(task)
+    async def analyze_humming_audio(self, gcs_file_path: str, workflow_run_id: Optional[str]) -> str:
+        """
+        口ずさみ音声を解析し、「トラックの雰囲気/テーマ」を取得する。
+        """
+        task = "Humming Audio Analysis (トラック雰囲気/テーマ取得)"
+        # モデル名を gemini-2.0-flash (settings.GEMINI_FLASH_MODEL_NAME) に指定
+        llm = self._get_llm(task, model_name=settings.GEMINI_FLASH_MODEL_NAME, for_generation=False)
         mime_type = self._get_mime_type_from_gcs_path(gcs_file_path)
-        prompt_text_content = prompts.KEY_ESTIMATION_PROMPT_STRUCTURED
+
+        # プロンプトは services.prompts から取得
         messages = [
-            SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED),
             HumanMessage(content=[
-                prompt_text_content,
+                prompts.HUMMING_ANALYSIS_SYSTEM_PROMPT, # システムプロンプトとして機能させる
                 {
                     "type": "media",
                     "file_uri": gcs_file_path,
@@ -142,114 +155,82 @@ class AudioAnalyzer:
                 }
             ])
         ]
-        parsed_output: KeyOutput = await self._call_vertex_api(
-            llm, messages, task, {"gcs_file_path": gcs_file_path, "mime_type": mime_type}, workflow_run_id, True, KeyOutput
-        )
-        if not parsed_output.primary_key or parsed_output.primary_key == "Undetermined":
-            logger.warning(f"[{task}] Vertex AI が未確定の主キーを返しました。")
-            return "Undetermined"
-        return parsed_output.primary_key
+        try:
+            response_ai_message: AIMessage = await self._call_vertex_api(
+                llm, messages, task, {"gcs_file_path": gcs_file_path, "mime_type": mime_type}, workflow_run_id
+            )
+            # 応答はテキスト形式を期待
+            theme_text = response_ai_message.content.strip()
+            if not theme_text:
+                logger.warning(f"[{task}] Vertex AI が空の「トラックの雰囲気/テーマ」を返しました。")
+                raise AnalysisFailedException(message="AIが「トラックの雰囲気/テーマ」を返しませんでした (Vertex AI)。")
+            logger.info(f"口ずさみ音声解析成功。テーマ: {theme_text[:100]}...")
+            return theme_text
+        except VertexAIAPIErrorException as e: # API呼び出しレベルのエラー
+            logger.error(f"[{task}] Vertex AI APIエラー: {e.message}", exc_info=True)
+            raise AnalysisFailedException(message=f"口ずさみ音声解析中にAPIエラーが発生しました: {e.message}", detail=e.detail)
+        except Exception as e: # その他の予期せぬエラー
+            logger.error(f"[{task}] 予期せぬエラー: {e}", exc_info=True)
+            raise AnalysisFailedException(message=f"口ずさみ音声解析中に予期せぬエラーが発生しました: {str(e)}")
 
-    async def estimate_bpm(self, gcs_file_path: str, workflow_run_id: Optional[str]) -> int:
-        task = "BPM Estimation (Structured)"
-        llm = self._get_llm(task)
+
+    async def generate_musicxml_from_theme(self, gcs_file_path: str, humming_analysis_theme: str, workflow_run_id: Optional[str]) -> str:
+        """
+        口ずさみ音声と「トラックの雰囲気/テーマ」からMusicXMLを生成する。
+        """
+        task = "MusicXML Generation (バッキングトラック生成)"
+        # モデル名を gemini-2.0-flash (settings.GEMINI_FLASH_MODEL_NAME) に指定
+        llm = self._get_llm(task, model_name=settings.GEMINI_FLASH_MODEL_NAME, for_generation=True)
         mime_type = self._get_mime_type_from_gcs_path(gcs_file_path)
-        prompt_text_content = prompts.BPM_ESTIMATION_PROMPT_STRUCTURED
+
+        # プロンプトテンプレートにテーマを埋め込む
+        prompt_text = prompts.MUSICXML_GENERATION_PROMPT_TEMPLATE.format(humming_analysis_theme=humming_analysis_theme)
         messages = [
-            SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED),
+            SystemMessage(content=prompts.MUSICXML_GENERATION_SYSTEM_PROMPT),
             HumanMessage(content=[
-                prompt_text_content,
-                {
+                prompt_text, # テキストパート
+                { # 音声ファイルパート
                     "type": "media",
                     "file_uri": gcs_file_path,
                     "mime_type": mime_type,
                 }
             ])
         ]
-        parsed_output: BpmOutput = await self._call_vertex_api(
-            llm, messages, task, {"gcs_file_path": gcs_file_path, "mime_type": mime_type}, workflow_run_id, True, BpmOutput
-        )
-        if parsed_output.bpm <= 0:
-            logger.warning(f"[{task}] Vertex AI が無効なBPMを返しました: {parsed_output.bpm}")
-            raise AnalysisFailedException(message="AIが有効なBPMを返しませんでした (Vertex AI)。")
-        return parsed_output.bpm
-
-    async def estimate_chords(self, gcs_file_path: str, workflow_run_id: Optional[str]) -> List[str]:
-        task = "Chord Progression Estimation (Structured)"
-        llm = self._get_llm(task)
-        mime_type = self._get_mime_type_from_gcs_path(gcs_file_path)
-        prompt_text_content = prompts.CHORD_PROGRESSION_PROMPT_STRUCTURED
-        messages = [
-            SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED),
-            HumanMessage(content=[
-                prompt_text_content,
-                {
-                    "type": "media",
-                    "file_uri": gcs_file_path,
-                    "mime_type": mime_type,
-                }
-            ])
-        ]
-        parsed_output: ChordProgressionOutput = await self._call_vertex_api(
-            llm, messages, task, {"gcs_file_path": gcs_file_path, "mime_type": mime_type}, workflow_run_id, True, ChordProgressionOutput
-        )
-        if not parsed_output.chords:
-            logger.warning(f"[{task}] Vertex AI がコード進行の空リストを返しました。Undeterminedとして扱います。")
-            return ["Undetermined"]
-        return parsed_output.chords
-
-    async def estimate_genre(self, gcs_file_path: str, workflow_run_id: Optional[str]) -> str:
-        task = "Genre Estimation (Structured)"
-        llm = self._get_llm(task)
-        mime_type = self._get_mime_type_from_gcs_path(gcs_file_path)
-        prompt_text_content = prompts.GENRE_ESTIMATION_PROMPT_STRUCTURED
-        messages = [
-            SystemMessage(content=prompts.AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED),
-            HumanMessage(content=[
-                prompt_text_content,
-                {
-                    "type": "media",
-                    "file_uri": gcs_file_path,
-                    "mime_type": mime_type,
-                }
-            ])
-        ]
-        parsed_output: GenreOutput = await self._call_vertex_api(
-            llm, messages, task, {"gcs_file_path": gcs_file_path, "mime_type": mime_type}, workflow_run_id, True, GenreOutput
-        )
-        if not parsed_output.primary_genre or parsed_output.primary_genre == "Undetermined":
-            logger.warning(f"[{task}] Vertex AI が未確定の主要ジャンルを返しました。")
-            return "Undetermined"
-        return parsed_output.primary_genre
-
-    async def generate_backing_track(self, key: str, bpm: int, chords: List[str], genre: str, workflow_run_id: Optional[str]) -> str:
-        task = "Backing Track Generation (MusicXML)"
-        llm = self._get_llm(task, for_generation=True) # こちらは音声入力ではないので変更なし
-        chords_str = ", ".join(chords)
-        prompt_text = prompts.BACKING_TRACK_GENERATION_PROMPT_TEMPLATE.format(key=key, bpm=bpm, chords_str=chords_str, genre=genre)
-        messages = [SystemMessage(content=prompts.MUSIC_GENERATION_SYSTEM_PROMPT), HumanMessage(content=prompt_text)]
-        request_params = {"key": key, "bpm": bpm, "chords": chords_str, "genre": genre}
-        response: AIMessage = await self._call_vertex_api(llm, messages, task, request_params, workflow_run_id) # type: ignore
-        content = response.content
-        if isinstance(content, str):
+        try:
+            response_ai_message: AIMessage = await self._call_vertex_api(
+                llm, messages, task, {"gcs_file_path": gcs_file_path, "humming_analysis_theme": humming_analysis_theme}, workflow_run_id
+            )
+            content = response_ai_message.content
+            # MusicXMLの抽出ロジック (既存のものを流用・調整)
             match = re.search(r"MUSICXML_START\s*([\s\S]+?)\s*MUSICXML_END", content, re.DOTALL)
             if match:
                 musicxml_text = match.group(1).strip()
                 if not musicxml_text:
+                    logger.error(f"[{task}] 抽出されたMusicXMLデータが空です。")
                     raise GenerationFailedException(message="抽出されたMusicXMLデータが空です (Vertex AI)。", detail="LLM response contained MUSICXML_START/END tags but no content.")
-                if not (musicxml_text.startswith("<?xml") or musicxml_text.startswith("<score-partwise")):
-                    logger.warning(f"生成されたMusicXML (Vertex AI) は整形されていない可能性があります: {musicxml_text[:100]}")
+                # 簡単なXML形式のチェック (必須ではないが、より堅牢にするなら)
+                if not (musicxml_text.startswith("<?xml") and musicxml_text.endswith("</score-partwise>")):
+                    logger.warning(f"[{task}] 生成されたMusicXMLが期待される形式と異なる可能性があります: {musicxml_text[:100]}...{musicxml_text[-100:]}")
+                logger.info(f"MusicXML生成成功。データ長: {len(musicxml_text)}")
                 return musicxml_text
-            if "CANNOT_GENERATE_MUSICXML" in content.upper():
+            if "CANNOT_GENERATE_MUSICXML" in content.upper(): # AIが明示的に生成不可と伝えた場合
+                 logger.warning(f"[{task}] Vertex AI がMusicXMLデータを生成できないと報告しました。応答: {content[:200]}")
                  raise GenerationFailedException(message="Vertex AI がMusicXMLデータを生成できないと報告しました。", detail=content)
-            logger.warning(f"LLM応答 (Vertex AI) のMusicXMLにMUSICXML_START/ENDタグが含まれていませんでした。コンテント: {content[:200]}")
+            logger.warning(f"[{task}] LLM応答のMusicXMLにMUSICXML_START/ENDタグが含まれていませんでした。コンテント: {content[:200]}...")
             raise GenerationFailedException(message="Vertex AI が期待する形式でMusicXMLデータを返しませんでした (タグ欠落)。", detail=f"Response (start): {str(content)[:200]}")
-        raise GenerationFailedException(message=f"バッキングトラック生成で予期せぬ応答タイプ。期待:str, 受信:{type(content)}。", detail=f"Content: {str(content)[:200]}")
+        except VertexAIAPIErrorException as e:
+            logger.error(f"[{task}] Vertex AI APIエラー: {e.message}", exc_info=True)
+            raise GenerationFailedException(message=f"MusicXML生成中にAPIエラーが発生しました: {e.message}", detail=e.detail)
+        except Exception as e:
+            logger.error(f"[{task}] 予期せぬエラー: {e}", exc_info=True)
+            raise GenerationFailedException(message=f"MusicXML生成中に予期せぬエラーが発生しました: {str(e)}")
 
 audio_analyzer = AudioAnalyzer()
 
+# 既存の estimate_key, estimate_bpm, estimate_chords, estimate_genre は削除
+
 async def node_log_event(state: AudioAnalysisWorkflowState, event_name: str, is_start: bool, data: Optional[Dict] = None) -> None:
-    log_level = logging.DEBUG
+    log_level = logging.DEBUG # INFOからDEBUGに変更してログ量を調整
     status = "開始" if is_start else "終了"
     message = f"ワークフローノード {event_name} {status}"
     extra_info = {"workflow_run_id": state.get("workflow_run_id"), "node_name": event_name}
@@ -260,208 +241,183 @@ async def node_log_event(state: AudioAnalysisWorkflowState, event_name: str, is_
         message += f". Duration: {extra_info['duration_seconds']:.2f}s"
     logger.log(log_level, message, extra=extra_info)
 
-async def execute_analysis_node(state: AudioAnalysisWorkflowState, analysis_func_name: str, output_key: str, error_key: str) -> Dict[str, Any]:
-    node_name = analysis_func_name
+# execute_analysis_node は汎用性が低くなったため、各ノードで直接呼び出す形式に変更。削除。
+
+# 新しいノード: node_analyze_humming_audio
+async def node_analyze_humming_audio(state: AudioAnalysisWorkflowState) -> Dict[str, Any]:
+    node_name = "analyze_humming_audio"
     start_time = time.time()
-    await node_log_event(state, node_name, is_start=True, data={"start_time": start_time})
+    await node_log_event(state, node_name, is_start=True, data={"start_time": start_time, "gcs_file_path": state["gcs_file_path"]})
     output: Dict[str, Any] = {}
     try:
-        analysis_method = getattr(audio_analyzer, analysis_func_name)
-        result = await analysis_method(state["gcs_file_path"], state.get("workflow_run_id"))
-        output[output_key] = result
+        theme = await audio_analyzer.analyze_humming_audio(state["gcs_file_path"], state.get("workflow_run_id"))
+        output["humming_analysis_theme"] = theme
+        # 「トラックの雰囲気/テーマ」を final_analysis_result にも格納 (チャット連携用)
+        # ここで AnalysisResult を作成する。humming_theme のみを持つ。
+        output["final_analysis_result"] = AnalysisResult(humming_theme=theme)
     except Exception as e:
-        logger.error(f"Node {node_name} failed: {e}", exc_info=True, extra={"workflow_run_id": state.get("workflow_run_id")})
-        output[error_key] = f"{node_name} failed: {str(e)}"
+        error_message = f"{node_name} 失敗: {str(e)}"
+        logger.error(error_message, exc_info=True, extra={"workflow_run_id": state.get("workflow_run_id")})
+        output["humming_analysis_error"] = error_message
+        # エラー発生時も final_analysis_result にエラー情報を含めるか、あるいはNoneのままにするか検討。
+        # ここではNoneのままにし、後続の条件分岐でエラーを処理する。
     await node_log_event(state, node_name, is_start=False, data={"start_time": start_time, **output})
     return output
 
-async def node_estimate_key(state: AudioAnalysisWorkflowState) -> Dict[str, Any]:
-    return await execute_analysis_node(state, "estimate_key", "estimated_key", "key_estimation_error")
+# 既存の node_estimate_... は削除
 
-async def node_estimate_bpm(state: AudioAnalysisWorkflowState) -> Dict[str, Any]:
-    return await execute_analysis_node(state, "estimate_bpm", "estimated_bpm", "bpm_estimation_error")
+# node_aggregate_analysis_results は大幅に簡略化されるか不要になる。
+# 今回は node_analyze_humming_audio が成功すれば final_analysis_result が作成されるため、集約は不要。削除。
 
-async def node_estimate_chords(state: AudioAnalysisWorkflowState) -> Dict[str, Any]:
-    return await execute_analysis_node(state, "estimate_chords", "estimated_chords", "chords_estimation_error")
-
-async def node_estimate_genre(state: AudioAnalysisWorkflowState) -> Dict[str, Any]:
-    return await execute_analysis_node(state, "estimate_genre", "estimated_genre", "genre_estimation_error")
-
-async def node_aggregate_analysis_results(state: AudioAnalysisWorkflowState) -> Dict[str, Any]:
-    node_name = "aggregate_analysis_results"
+# 新しいノード: node_generate_musicxml (旧 node_generate_backing_track を改修)
+async def node_generate_musicxml(state: AudioAnalysisWorkflowState) -> Dict[str, Any]:
+    node_name = "generate_musicxml"
     start_time = time.time()
     await node_log_event(state, node_name, is_start=True, data={"start_time": start_time})
     output: Dict[str, Any] = {}
-    errors = [err for key, err in state.items() if "error" in key and err and key not in ["analysis_error", "generation_error"]]
 
-    if errors:
-        output["analysis_error"] = "Analysis failed in one or more tasks: " + "; ".join(str(e) for e in errors)
-        logger.error(output["analysis_error"], extra={"workflow_run_id": state.get("workflow_run_id"), "individual_errors": errors})
-    else:
-        missing = []
-        if state.get("estimated_key") == "Undetermined": missing.append("key")
-        if state.get("estimated_bpm", 0) <= 0: missing.append("BPM")
-        if not state.get("estimated_chords") or state.get("estimated_chords") == ["Undetermined"]: missing.append("chords")
-        if state.get("estimated_genre") == "Undetermined": missing.append("genre")
+    humming_theme = state.get("humming_analysis_theme")
+    gcs_file_path = state.get("gcs_file_path")
 
-        if missing:
-            output["analysis_error"] = f"必須の解析結果のいくつかが 'Undetermined' または無効です: {', '.join(missing)}。"
-            logger.error(output["analysis_error"], extra={"workflow_run_id": state.get("workflow_run_id")})
-        else:
-            try:
-                output["final_analysis_result"] = AnalysisResult(
-                    key=state.get("estimated_key", "Undetermined"),
-                    bpm=state.get("estimated_bpm", 0),
-                    chords=state.get("estimated_chords", []),
-                    genre_by_ai=state.get("estimated_genre", "Undetermined")
-                )
-            except Exception as e: # Pydantic ValidationErrorなどもキャッチするため広めに
-                logger.error(f"AnalysisResult Pydanticモデルの作成エラー: {e}", exc_info=True, extra={"workflow_run_id": state.get("workflow_run_id")})
-                output["analysis_error"] = f"解析結果の最終処理に失敗しました: {str(e)}"
-
-    await node_log_event(state, node_name, is_start=False, data={"start_time": start_time, **output})
-    return output
-
-async def node_generate_backing_track(state: AudioAnalysisWorkflowState) -> Dict[str, Any]:
-    node_name = "generate_backing_track"
-    start_time = time.time()
-    await node_log_event(state, node_name, is_start=True, data={"start_time": start_time})
-    output: Dict[str, Any] = {}
-    analysis_result = state.get("final_analysis_result")
-
-    if state.get("analysis_error") or not analysis_result:
-        output["generation_error"] = "バッキングトラックを生成できません: 解析エラーまたは解析結果がありません。"
-        logger.warning(output["generation_error"], extra={"workflow_run_id": state.get("workflow_run_id")})
+    if state.get("humming_analysis_error") or not humming_theme or not gcs_file_path:
+        error_msg = "MusicXMLを生成できません: 口ずさみ解析エラーまたは必要な情報（テーマ、ファイルパス）がありません。"
+        output["musicxml_generation_error"] = error_msg
+        logger.warning(error_msg, extra={"workflow_run_id": state.get("workflow_run_id")})
     else:
         try:
-            # analysis_resultがNoneでないことは上でチェック済みだが、mypyのために再度確認
-            if analysis_result:
-                output["generated_backing_track_data"] = await audio_analyzer.generate_backing_track(
-                    key=analysis_result.key, bpm=analysis_result.bpm, chords=analysis_result.chords,
-                    genre=analysis_result.genre_by_ai, workflow_run_id=state.get("workflow_run_id")
+            # humming_theme と gcs_file_path がNoneでないことを保証 (mypyのため)
+            if humming_theme and gcs_file_path:
+                 output["generated_musicxml_data"] = await audio_analyzer.generate_musicxml_from_theme(
+                    gcs_file_path=gcs_file_path,
+                    humming_analysis_theme=humming_theme,
+                    workflow_run_id=state.get("workflow_run_id")
                 )
             else: # このブロックには通常到達しないはず
-                output["generation_error"] = "予期せぬエラー: analysis_resultがNoneです。"
-                logger.error(output["generation_error"], extra={"workflow_run_id": state.get("workflow_run_id")})
-
+                output["musicxml_generation_error"] = "予期せぬエラー: MusicXML生成に必要な情報が不足しています。"
+                logger.error(output["musicxml_generation_error"], extra={"workflow_run_id": state.get("workflow_run_id")})
 
         except Exception as e:
-            logger.error(f"Node {node_name} failed: {e}", exc_info=True, extra={"workflow_run_id": state.get("workflow_run_id")})
-            output["generation_error"] = f"{node_name} failed: {str(e)}"
+            error_message = f"{node_name} 失敗: {str(e)}"
+            logger.error(error_message, exc_info=True, extra={"workflow_run_id": state.get("workflow_run_id")})
+            output["musicxml_generation_error"] = error_message
 
-    await node_log_event(state, node_name, is_start=False, data={"start_time": start_time, "generation_error_present": bool(output.get("generation_error"))})
+    await node_log_event(state, node_name, is_start=False, data={"start_time": start_time, "generation_error_present": bool(output.get("musicxml_generation_error"))})
     return output
 
 def build_workflow() -> StateGraph:
     workflow = StateGraph(AudioAnalysisWorkflowState)
 
+    # ノードの定義
     workflow.add_node("entry_point", lambda state: {"entry_point_completed": True})
-    workflow.add_node("estimate_key_node", node_estimate_key)
-    workflow.add_node("estimate_bpm_node", node_estimate_bpm)
-    workflow.add_node("estimate_chords_node", node_estimate_chords)
-    workflow.add_node("estimate_genre_node", node_estimate_genre)
-    workflow.add_node("aggregate_analysis_node", node_aggregate_analysis_results)
-    workflow.add_node("generate_backing_track_node", node_generate_backing_track)
-    workflow.add_node("handle_analysis_error_node", lambda state: {"analysis_handled": True, "analysis_error": state.get("analysis_error") or "Unknown analysis error"})
-    workflow.add_node("handle_generation_error_node", lambda state: {"generation_handled": True, "generation_error": state.get("generation_error") or "Unknown generation error"})
+    workflow.add_node("analyze_humming_node", node_analyze_humming_audio) # 新しい解析ノード
+    workflow.add_node("generate_musicxml_node", node_generate_musicxml)   # 新しい生成ノード
+    # エラーハンドリングノード (名前をより具体的に)
+    workflow.add_node("handle_humming_analysis_error_node", lambda state: {"analysis_handled": True, "humming_analysis_error": state.get("humming_analysis_error") or "口ずさみ解析中に不明なエラーが発生しました。"})
+    workflow.add_node("handle_musicxml_generation_error_node", lambda state: {"generation_handled": True, "musicxml_generation_error": state.get("musicxml_generation_error") or "MusicXML生成中に不明なエラーが発生しました。"})
 
     workflow.set_entry_point("entry_point")
 
-    # 並列実行を意図したエッジ設定
-    workflow.add_edge("entry_point", "estimate_key_node")
-    workflow.add_edge("entry_point", "estimate_bpm_node")
-    workflow.add_edge("entry_point", "estimate_chords_node")
-    workflow.add_edge("entry_point", "estimate_genre_node")
+    # エッジの接続
+    workflow.add_edge("entry_point", "analyze_humming_node")
 
-    # 各解析ノードから集約ノードへのエッジ
-    # これらが全て完了してから aggregate_analysis_node に進むことを保証するには、
-    # LangGraph の join ノードのような仕組み、またはカスタムの同期ロジックが必要になる場合があります。
-    # ここでは、単純にエッジを追加します。LangGraph が依存関係をどう解決するかに注意が必要です。
-    # 通常、複数の入力を持つノードは、すべての入力エッジがトリガーされるのを待ちます。
-    for node_name in ["estimate_key_node", "estimate_bpm_node", "estimate_chords_node", "estimate_genre_node"]:
-        workflow.add_edge(node_name, "aggregate_analysis_node")
+    # 口ずさみ解析ノードからの条件分岐
+    workflow.add_conditional_edges(
+        "analyze_humming_node",
+        lambda state: "handle_humming_analysis_error_node" if state.get("humming_analysis_error") else "generate_musicxml_node",
+        {
+            "generate_musicxml_node": "generate_musicxml_node",
+            "handle_humming_analysis_error_node": "handle_humming_analysis_error_node"
+        }
+    )
+    workflow.add_edge("handle_humming_analysis_error_node", END) # 解析エラー時は終了
 
-    workflow.add_conditional_edges("aggregate_analysis_node", lambda state: "handle_analysis_error_node" if state.get("analysis_error") else "generate_backing_track_node",
-        {"generate_backing_track_node": "generate_backing_track_node", "handle_analysis_error_node": "handle_analysis_error_node"})
-    workflow.add_edge("handle_analysis_error_node", END)
-    workflow.add_conditional_edges("generate_backing_track_node", lambda state: "handle_generation_error_node" if state.get("generation_error") or not state.get("generated_backing_track_data") else END,
-        {END: END, "handle_generation_error_node": "handle_generation_error_node"})
-    workflow.add_edge("handle_generation_error_node", END)
+    # MusicXML生成ノードからの条件分岐
+    workflow.add_conditional_edges(
+        "generate_musicxml_node",
+        lambda state: "handle_musicxml_generation_error_node" if state.get("musicxml_generation_error") or not state.get("generated_musicxml_data") else END,
+        {
+            END: END, # 成功時は終了
+            "handle_musicxml_generation_error_node": "handle_musicxml_generation_error_node"
+        }
+    )
+    workflow.add_edge("handle_musicxml_generation_error_node", END) # 生成エラー時は終了
+
     return workflow.compile()
 
 app_graph = build_workflow()
 
 async def run_audio_analysis_workflow(gcs_file_path: str) -> AudioAnalysisWorkflowState:
     workflow_run_id = uuid.uuid4().hex
-    logger.info(f"音声解析ワークフロー開始 ({gcs_file_path})", extra={"workflow_run_id": workflow_run_id, "gcs_file_path": gcs_file_path})
+    logger.info(f"新しい音声解析・MusicXML生成ワークフロー開始 ({gcs_file_path})", extra={"workflow_run_id": workflow_run_id, "gcs_file_path": gcs_file_path})
     start_time_overall = time.time()
+
+    # AudioAnalysisWorkflowState の初期化を新しいフィールドに合わせて変更
     initial_state = AudioAnalysisWorkflowState(
-        gcs_file_path=gcs_file_path, workflow_run_id=workflow_run_id, estimated_key=None, key_estimation_error=None,
-        estimated_bpm=None, bpm_estimation_error=None, estimated_chords=None, chords_estimation_error=None,
-        estimated_genre=None, genre_estimation_error=None, analysis_error=None, generated_backing_track_data=None,
-        generation_error=None, final_analysis_result=None, analysis_handled=None, generation_handled=None,
+        gcs_file_path=gcs_file_path,
+        workflow_run_id=workflow_run_id,
+        humming_analysis_theme=None,
+        humming_analysis_error=None,
+        generated_musicxml_data=None,
+        musicxml_generation_error=None,
+        final_analysis_result=None, # 初期値はNone
+        analysis_handled=None,
+        generation_handled=None,
         entry_point_completed=None
     )
-    final_state: AudioAnalysisWorkflowState = initial_state.copy() # type: ignore
+    final_state: AudioAnalysisWorkflowState = initial_state.copy()
 
     try:
-        config = {"recursion_limit": 25, "configurable": {"workflow_run_id": workflow_run_id}} # 再帰制限を少し増やすことを検討
-        # LangGraph の ainvoke は状態の完全な辞書または変更差分を返すことがあります。
-        # 型安全のため、返り値を適切に処理します。
+        config = {"recursion_limit": 10, "configurable": {"workflow_run_id": workflow_run_id}} # 再帰制限は通常これで十分
         invoked_result = await app_graph.ainvoke(initial_state, config=config)
 
         if isinstance(invoked_result, dict):
-            # LangGraph の多くのバージョンでは、最終状態の完全な辞書が返されます。
-            # TypedDict との互換性のために、キーが存在するか確認しながら代入するか、
-            # **invoked_result で展開して新しい TypedDict を作成するアプローチも取れます。
-            # ここでは、返された辞書のキーを AudioAnalysisWorkflowState のキーにマッピングします。
             for key, value in invoked_result.items():
                 if key in AudioAnalysisWorkflowState.__annotations__:
                     final_state[key] = value # type: ignore
                 else:
                     logger.warning(f"ainvokeから予期しないキー '{key}' が返されました。")
         else:
-            logger.warning(f"app_graph.ainvoke returned an unexpected type: {type(invoked_result)}. Using initial state as fallback.")
-            final_state["analysis_error"] = (final_state.get("analysis_error") or "") + " | Workflow invocation returned unexpected type."
+            logger.warning(f"app_graph.ainvokeが予期しない型を返しました: {type(invoked_result)}。初期状態をフォールバックとして使用します。")
+            # このケースでは、エラー情報を final_state に追加
+            final_state["humming_analysis_error"] = (final_state.get("humming_analysis_error") or "") + " | ワークフロー呼び出しが予期しない型を返しました。"
 
     except Exception as e:
         logger.error(f"LangGraphワークフロー実行中の致命的エラー ({gcs_file_path}): {e}", exc_info=True, extra={"workflow_run_id": workflow_run_id})
-        error_addon = f" | Workflow execution framework error: {type(e).__name__}: {e}"
-        current_analysis_error = final_state.get("analysis_error") or ""
-        final_state["analysis_error"] = current_analysis_error + error_addon # type: ignore
-        current_generation_error = final_state.get("generation_error") or ""
-        final_state["generation_error"] = current_generation_error + error_addon # type: ignore
+        error_addon = f" | ワークフロー実行フレームワークエラー: {type(e).__name__}: {e}"
+        # エラーが発生した場合、関連するエラーステートに情報を追加
+        current_humming_error = final_state.get("humming_analysis_error") or ""
+        final_state["humming_analysis_error"] = current_humming_error + error_addon # type: ignore
+        current_musicxml_error = final_state.get("musicxml_generation_error") or ""
+        final_state["musicxml_generation_error"] = current_musicxml_error + error_addon # type: ignore
+
 
     duration = time.time() - start_time_overall
     log_extra = {
         "workflow_run_id": workflow_run_id, "gcs_file_path": gcs_file_path, "duration_seconds": round(duration, 2),
-        "analysis_result_present": bool(final_state.get("final_analysis_result")),
-        "generation_data_present": bool(final_state.get("generated_backing_track_data")),
-        "analysis_error": final_state.get("analysis_error"), "generation_error": final_state.get("generation_error"),
+        "humming_analysis_theme_present": bool(final_state.get("humming_analysis_theme")),
+        "musicxml_data_present": bool(final_state.get("generated_musicxml_data")),
+        "humming_analysis_error": final_state.get("humming_analysis_error"),
+        "musicxml_generation_error": final_state.get("musicxml_generation_error"),
+        "final_analysis_result_present": bool(final_state.get("final_analysis_result"))
     }
 
+    # 最終結果の検証と例外送出
     final_analysis_result_obj = final_state.get("final_analysis_result")
-    generated_backing_track_data_val = final_state.get("generated_backing_track_data")
+    generated_musicxml_data_val = final_state.get("generated_musicxml_data")
 
+    # final_analysis_result (口ずさみ解析の結果) がない場合は AnalysisFailedException
     if not final_analysis_result_obj:
-        detail = str(final_state.get('analysis_error', "ワークフローは解析結果を生成せずに終了しました。"))
-        logger.error(f"音声解析失敗（結果欠落）: {detail}", extra=log_extra)
-        raise AnalysisFailedException(message="音声解析が正常に完了しませんでした（結果欠落）。", detail=detail)
+        detail = str(final_state.get('humming_analysis_error', "ワークフローは口ずさみ解析結果を生成せずに終了しました。"))
+        logger.error(f"口ずさみ解析失敗（結果欠落）: {detail}", extra=log_extra)
+        raise AnalysisFailedException(message="口ずさみ音声解析が正常に完了しませんでした（結果欠落）。", detail=detail)
 
-    # final_analysis_result が存在しても、バッキングトラック生成が失敗するケースを考慮
-    if not generated_backing_track_data_val and not final_state.get("generation_error"):
-        # このケースは、生成ノード自体は成功したがデータが空だった、または後続の条件でENDにならなかった場合など、
-        # より詳細なエラーハンドリングが必要なシナリオを示唆する可能性があります。
-        # ここでは、データがない場合はエラーとして扱います。
-        generation_error_detail = "バッキングトラックデータが生成されませんでした。エラーメッセージはありません。"
-        logger.error(f"バッキングトラック生成失敗（データ欠落）: {generation_error_detail}", extra=log_extra)
-        raise GenerationFailedException(message="バッキングトラック生成が正常に完了しませんでした（データ欠落）。", detail=generation_error_detail)
-    elif not generated_backing_track_data_val and final_state.get("generation_error"):
-        # generation_error が設定されている場合は、それが主要なエラー情報
-        detail = str(final_state.get('generation_error'))
-        logger.error(f"バッキングトラック生成失敗（エラーあり）: {detail}", extra=log_extra)
-        raise GenerationFailedException(message="バッキングトラック生成が正常に完了しませんでした（エラーあり）。", detail=detail)
+    # generated_musicxml_data がない場合は GenerationFailedException
+    # musicxml_generation_error がある場合はそれを詳細として使用
+    if not generated_musicxml_data_val:
+        detail = str(final_state.get('musicxml_generation_error', "ワークフローはMusicXMLデータを生成せずに終了しました。"))
+        logger.error(f"MusicXML生成失敗（データ欠落またはエラー）: {detail}", extra=log_extra)
+        raise GenerationFailedException(message="MusicXML生成が正常に完了しませんでした。", detail=detail)
 
 
-    logger.info(f"ワークフロー ({gcs_file_path}) 正常終了。", extra=log_extra)
+    logger.info(f"新しいワークフロー ({gcs_file_path}) 正常終了。", extra=log_extra)
     return final_state

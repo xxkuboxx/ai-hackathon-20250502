@@ -25,10 +25,13 @@ async def handle_chat_request(
     logger.info(f"チャットリクエスト受信。メッセージ数: {len(chat_request.messages)}")
 
     try:
+        # build_vertex_chat_messages に musicxml_gcs_url も渡すように変更
+        # build_vertex_chat_messages に musicxml_content を渡すように変更
         vertex_messages = chat_service.build_vertex_chat_messages(
             system_prompt=prompts.SESSIONMUSE_CHAT_SYSTEM_PROMPT,
             analysis_context=chat_request.analysis_context,
-            chat_history=chat_request.messages
+            chat_history=chat_request.messages,
+            musicxml_content=chat_request.musicxml_content # musicxml_gcs_url から変更
         )
     except Exception as e:
         logger.error(f"Vertex AIチャットメッセージの構築エラー: {e}", exc_info=True)

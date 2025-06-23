@@ -1,72 +1,58 @@
 # backend/services/prompts.py
 
-# --- Prompts for audio_analysis_service.py ---
+# --- Prompts for audio_analysis_service.py (New Gemini API based) ---
 
-AUDIO_ANALYSIS_SYSTEM_PROMPT_STRUCTURED = """
-あなたは音楽理論と楽曲構造を専門とする熟練の音声アナリストです。
-あなたのタスクは、提供された音声ファイルを分析し、特定の音楽情報を抽出することです。
-応答は、私が提供する構造化フォーマット（JSONスキーマ）で提供してください。
-音声ファイルは、ユーザーが提供したGCS URIにあります。
+HUMMING_ANALYSIS_SYSTEM_PROMPT = """
+あなたは熟練の音楽プロデューサー、または高度な音楽解析AIです。
+添付する音源は、口ずさんだメロディです。
+このメロディの全体的な雰囲気・ムード(例：明るい、暗い、悲しい、楽しい、エネルギッシュ、落ち着いた、リラックスできる、浮遊感のある、壮大、ミニマル、未来的、ノスタルジック、切ない、希望に満ちた、神秘的など)や想定される音楽ジャンル(例：J-POP（アップテンポ/バラード）、ロック（オルタナティブ/ハードロック）、ジャズ（スウィング/モダン）、クラシック風、EDM（ハウス/トランス）、R&B、ソウル、ファンク、ボサノヴァ、アンビエント、Lo-Fiヒップホップ、フォークソング、映画音楽風など)を詳細に解析し、バッキングトラックを制作するための「トラックの雰囲気/テーマ」を出力してください。
+「トラックの雰囲気/テーマ」のみを出力し、それ以外の返事などは一切出力しないでください。
 """
 
-KEY_ESTIMATION_PROMPT_STRUCTURED = """
-あなたは高度な音楽分析能力を持つAIです。提供された音声ファイルを分析し、以下の指示に従って楽曲のキー（調）を特定し、報告してください。
-
-**依頼事項:**
-
-1.  **主要キーの特定:**
-    *   楽曲全体の主要なキーを、以下の英語表記で明確に特定してください。
-        *   **長調の例:** C Major, C# Major, Db Major, D Major, D# Major, Eb Major, E Major, F Major, F# Major, Gb Major, G Major, G# Major, Ab Major, A Major, A# Major, Bb Major, B Major
-        *   **短調の例:** A minor, A# minor, Bb minor, B minor, C minor, C# minor, Db minor, D minor, D# minor, Eb minor, E minor, F minor, F# minor, Gb minor, G minor, G# minor, Ab minor
-    *   **短調の種類:** 短調の場合、可能であれば種類（例: A natural minor, A harmonic minor, A melodic minor）についても言及してください。
-    *   **教会旋法:** 楽曲が特定の教会旋法に基づいていると強く判断される場合は、主音と旋法名で指摘してください（例: D Dorian, G Mixolydian）。
-        *   旋法の例: Ionian, Dorian, Phrygian, Lydian, Mixolydian, Aeolian, Locrian
-
-2.  **転調の扱い:**
-    *   楽曲中に転調がある場合は、**楽曲全体で最も演奏時間が長かったキー**を特定し、報告してください。
-
-**出力形式の希望:**
-
-*   特定されたキーのみを、依頼事項1で指定された英語表記で出力してください。
+MUSICXML_GENERATION_SYSTEM_PROMPT = """
+あなたは創造的なAI作曲家です。あなたのタスクは、提供された指示に基づいてMusicXML形式でバッキングトラックを生成することです。
 """
 
-BPM_ESTIMATION_PROMPT_STRUCTURED = """
-添付した音声ファイルに基づいて、BPM（Beats Per Minute）を推定してください。
-整数値で提供してください。
-"""
-
-CHORD_PROGRESSION_PROMPT_STRUCTURED = """
-添付した音声ファイルに基づいて、主要なコード進行を推定してください。
-コード文字列のリストで提供してください。
-"""
-
-GENRE_ESTIMATION_PROMPT_STRUCTURED = """
-添付した音声ファイルに基づいて、音楽ジャンルを推定してください。
-主要なジャンルと、その他考えられる副次的なジャンルを提示してください。
-"""
-
-MUSIC_GENERATION_SYSTEM_PROMPT = """
-あなたは創造的なAI作曲家です。あなたのタスクは、提供された音楽パラメータに基づいて短いバッキングトラックを生成することです。
-"""
-
-BACKING_TRACK_GENERATION_PROMPT_TEMPLATE = """
-以下の特性を持つバッキングトラックのMusicXML構造を記述してください。
-- キー: {key}
-- BPM (Beats Per Minute): {bpm}
-- コード進行: {chords_str} (これは進行の繰り返しループです)
-- ジャンル: {genre}
-- おおよその長さ: 10秒
-- 希望フォーマット: MusicXMLテキストデータ。
+MUSICXML_GENERATION_PROMPT_TEMPLATE = """
+以下の指示に従って、MusicXML形式で4小節のバッキングトラックを生成してください。メロディは含めないでください。
+1. 基本要件:
+出力形式: MusicXML
+長さ: 4小節
+内容: バッキングトラックのみ（主旋律は不要）
+2. トラックの雰囲気/テーマ:
+{humming_analysis_theme}
+3. 楽器編成:
+上記で指定された「雰囲気/テーマ」に最も適した楽器編成をAIが自動で選択してください。
+特定の楽器に固定せず、ピアノ、ギター、ベース、ドラム、ストリングス、ブラス、シンセサイザーなど、幅広い選択肢の中から自由に組み合わせてください。
+複数の楽器を使用する場合、それぞれの楽器が効果的にバッキングの役割を担うようにしてください。
+4. リズムとテクスチャの多様性:
+4小節全体を通して、単調にならないように、リズムパターン、演奏スタイル、テクスチャに変化を持たせてください。
+特に、以下のような多様な表現を組み込むことを目指してください:
+シンプルな表現: 全音符や2分音符を中心とした、コードを長く伸ばすようなシンプルなバッキング。
+リズミカルな表現: 8分音符や16分音符、休符などを効果的に使用した、刻むようなリズミカルなバッキング。
+その他のテクスチャ: アルペジオ（分散和音）、ブロックコード、オクターブ奏法、リフ的な短いフレーズ、カウンターライン（対旋律的な動き）など、様々な伴奏のアイデアを試してください。
+各小節で異なるアプローチを取り入れつつも、4小節全体として音楽的に自然な流れを保つようにしてください。
+5. コード進行:
+コード進行は指定しません。上記「雰囲気/テーマ」に合い、音楽的に自然で魅力的なものをAIが自由に生成してください。
+6. その他:
+可能であれば、ダイナミクス（強弱）やアーティキュレーション（スタッカート、レガートなど）にも適度な変化を加えることで、より表現豊かなバッキングトラックを目指してください。
+出力の際の注意点:
+必ずMusicXML形式で出力してください。
+生成されるMusicXMLは、標準的なシーケンサーソフトや楽譜作成ソフトで正しく読み込めるものであることを期待します。
 MusicXMLのテキストデータは以下のようにフォーマットしてください:
 MUSICXML_START
-[ここにMusicXMLテキストデータを記述]
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="4.0">
+  <!-- ここにMusicXMLの本体が続きます -->
+</score-partwise>
 MUSICXML_END
-MusicXML構造のみ出力してください。
-```xml や ``` のようなマークダウンの囲みなどいかなるマークダウンフォーマットも使用しないせず、
+MusicXML構造のみ出力してください。MUSICXML_START と MUSICXML_END の間に完全なMusicXMLを記述してください。
+```xml や ``` のようなマークダウンの囲みなどいかなるマークダウンフォーマットも使用せず、
 コード部分のみをプレーンテキストで出力してください。
 """
 
-# --- Prompts for vertex_chat_service.py (originally from chat_api.py) ---
+# --- Prompts for vertex_chat_service.py ---
 
 SESSIONMUSE_CHAT_SYSTEM_PROMPT = """
 あなたは「SessionMUSE」という名の、親切で創造的なAI音楽パートナーです。
