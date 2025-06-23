@@ -38,6 +38,7 @@ dependencies:
   audio_waveforms: ^1.3.0
   path_provider: ^2.1.2
   http: ^1.1.0
+  flutter_markdown: ^0.6.22
 
 dev_dependencies:
   flutter_test:
