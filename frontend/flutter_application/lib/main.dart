@@ -89,22 +89,11 @@ class AudioProcessingService {
           webAudioData,
         );
       } else {
-        // モバイル環境：ファイルパスから作成（Content-Type明示）
-        String contentType = 'audio/wav'; // デフォルト
-        if (filePath.toLowerCase().endsWith('.m4a')) {
-          contentType = 'audio/mp4';
-        } else if (filePath.toLowerCase().endsWith('.mp3')) {
-          contentType = 'audio/mpeg';
-        } else if (filePath.toLowerCase().endsWith('.wav')) {
-          contentType = 'audio/wav';
-        } else if (filePath.toLowerCase().endsWith('.aac')) {
-          contentType = 'audio/aac';
-        }
-
+        // モバイル環境：ファイルパスから作成（WAV形式固定）
         file = await http.MultipartFile.fromPath(
           'file',
           filePath,
-          contentType: http_parser.MediaType.parse(contentType),
+          contentType: http_parser.MediaType.parse('audio/wav'),
         );
       }
       request.files.add(file);
@@ -513,14 +502,14 @@ class _MyHomePageState extends State<MyHomePage> {
           return null;
         }
       } else {
-        // モバイル環境での録音開始
+        // モバイル環境での録音開始（M4AをWAVとして扱う）
         final directory = await getApplicationDocumentsDirectory();
         final outputPath =
-            '${directory.path}/recorded_audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+            '${directory.path}/recorded_audio_${DateTime.now().millisecondsSinceEpoch}.wav';
 
         if (kDebugMode) print('録音開始: $outputPath');
 
-        // RecorderControllerで録音開始
+        // RecorderControllerで録音開始（AACエンコーダー、拡張子はWAV）
         await _recorderController!.record(
           androidEncoder: AndroidEncoder.aac,
           androidOutputFormat: AndroidOutputFormat.mpeg4,
