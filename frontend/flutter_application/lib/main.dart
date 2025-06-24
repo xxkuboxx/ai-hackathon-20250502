@@ -764,15 +764,6 @@ class _MyHomePageState extends State<MyHomePage> {
           }
         }
 
-        // 音声再生確認メッセージ
-        if (mounted && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('録音データを再生中...'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
       }
     } catch (e) {
       if (kDebugMode) print('Web再生エラー: $e');
@@ -934,43 +925,41 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
               ),
               // 録音データ再生ボタン
-              if (_audioFilePath != null) ...[
-                Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
+              Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _isPlaying
+                      ? Colors.orange.shade100
+                      : Colors.green.shade100,
+                  border: Border.all(
                     color: _isPlaying
-                        ? Colors.orange.shade100
-                        : Colors.green.shade100,
-                    border: Border.all(
-                      color: _isPlaying
-                          ? Colors.orange.shade300
-                          : Colors.green.shade300,
-                      width: 1.5,
-                    ),
-                  ),
-                  child: IconButton(
-                    icon: Icon(
-                      _isPlaying ? Icons.stop : Icons.play_arrow,
-                      size: 20,
-                      color: _isPlaying ? Colors.orange : Colors.green,
-                    ),
-                    onPressed: _recordingState == RecordingState.uploading
-                        ? null
-                        : _togglePlayback,
+                        ? Colors.orange.shade300
+                        : Colors.green.shade300,
+                    width: 1.5,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  _isPlaying ? '再生中' : '再生',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: _isPlaying ? Colors.orange : Colors.grey,
-                    fontWeight: FontWeight.w500,
+                child: IconButton(
+                  icon: Icon(
+                    _isPlaying ? Icons.stop : Icons.play_arrow,
+                    size: 20,
+                    color: _isPlaying ? Colors.orange : Colors.green,
                   ),
+                  onPressed: _audioFilePath == null
+                      ? null
+                      : _togglePlayback,
                 ),
-              ],
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _isPlaying ? '再生中' : '再生',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _isPlaying ? Colors.orange : Colors.grey,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),

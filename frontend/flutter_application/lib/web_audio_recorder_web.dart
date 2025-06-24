@@ -233,16 +233,8 @@ class WebAudioRecorderWeb {
           _mediaStream = null;
           _mediaRecorder = null;
 
-          // 録音データがWebM形式の場合、バックエンド互換性のためWAVヘッダーを追加
-          if (bytes.length > 4 && bytes[0] == 0x1A && bytes[1] == 0x45) {
-            // WebM形式が検出された場合、WAVファイルとして再パッケージ
-            if (kDebugMode)
-              print(
-                'WebM format detected, converting to WAV format for backend compatibility',
-              );
-            return _convertToWavFormat(bytes);
-          }
-
+          // 録音データをそのまま返す（形式変換を無効化してノイズを防ぐ）
+          if (kDebugMode) print('Returning original recorded audio data');
           return bytes;
         } else {
           if (kDebugMode) print('No recorded chunks available');
