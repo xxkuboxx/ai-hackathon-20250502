@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' as http_parser;
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/foundation.dart';
 import 'file_operations_io.dart'
@@ -77,6 +79,9 @@ class AudioProcessingService {
         'POST',
         Uri.parse('$baseUrl/api/process'),
       );
+      
+      // タイムアウト設定を追加（音声解析処理のため長めに設定）
+      request.headers['Connection'] = 'keep-alive';
 
       // ファイルを添付
       http.MultipartFile file;
@@ -88,21 +93,36 @@ class AudioProcessingService {
           webAudioData,
         );
       } else {
-        // モバイル環境：ファイルパスから作成
-        file = await http.MultipartFile.fromPath('file', filePath);
+        // モバイル環境：ファイルパスから作成（WAV形式固定）
+        file = await http.MultipartFile.fromPath(
+          'file',
+          filePath,
+          contentType: http_parser.MediaType.parse('audio/wav'),
+        );
       }
       request.files.add(file);
 
-      // リクエスト送信
-      var response = await request.send();
+      // リクエスト送信（タイムアウト設定: 3分）
+      var response = await request.send().timeout(
+        const Duration(minutes: 3),
+        onTimeout: () {
+          if (kDebugMode) print('API request timeout after 3 minutes');
+          throw TimeoutException('API request timeout', const Duration(minutes: 3));
+        },
+      );
 
       if (response.statusCode == 200) {
         var responseBody = await response.stream.bytesToString();
+        if (kDebugMode) print('API Response Body: $responseBody');
         var jsonData = json.decode(responseBody);
 
         return AudioAnalysisResult.fromJson(jsonData);
       } else {
-        if (kDebugMode) print('API Error: ${response.statusCode}');
+        var responseBody = await response.stream.bytesToString();
+        if (kDebugMode) {
+          print('API Error: ${response.statusCode}');
+          print('Error Response Body: $responseBody');
+        }
         return null;
       }
     } catch (e) {
@@ -143,6 +163,12 @@ class AudioProcessingService {
           'Accept': 'application/json',
         },
         body: json.encode(requestBody),
+      ).timeout(
+        const Duration(minutes: 2),
+        onTimeout: () {
+          if (kDebugMode) print('Chat API request timeout after 2 minutes');
+          throw TimeoutException('Chat API request timeout', const Duration(minutes: 2));
+        },
       );
 
       if (kDebugMode) {
@@ -326,9 +352,10 @@ class _MyHomePageState extends State<MyHomePage> {
           e.toString().contains('XMLHttpRequest')) {
         errorMessage =
             "CORS/ネットワークエラー: ブラウザのセキュリティ制限によりAPIに接続できません。サーバー側でCORS設定が必要です。";
-      } else if (e.toString().contains('SocketException') ||
-          e.toString().contains('TimeoutException')) {
+      } else if (e.toString().contains('SocketException')) {
         errorMessage = "ネットワークエラー: APIサーバーに接続できません。インターネット接続を確認してください。";
+      } else if (e.toString().contains('TimeoutException')) {
+        errorMessage = "処理時間が長くなっています。サーバーで音声解析処理中の可能性があります。しばらくお待ちください。";
       } else {
         errorMessage = "予期しないエラーが発生しました: ${e.toString()}";
       }
@@ -492,14 +519,14 @@ class _MyHomePageState extends State<MyHomePage> {
           return null;
         }
       } else {
-        // モバイル環境での録音開始
+        // モバイル環境での録音開始（M4AをWAVとして扱う）
         final directory = await getApplicationDocumentsDirectory();
         final outputPath =
-            '${directory.path}/recorded_audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+            '${directory.path}/recorded_audio_${DateTime.now().millisecondsSinceEpoch}.wav';
 
         if (kDebugMode) print('録音開始: $outputPath');
 
-        // RecorderControllerで録音開始
+        // RecorderControllerで録音開始（AACエンコーダー、拡張子はWAV）
         await _recorderController!.record(
           androidEncoder: AndroidEncoder.aac,
           androidOutputFormat: AndroidOutputFormat.mpeg4,
@@ -578,10 +605,15 @@ class _MyHomePageState extends State<MyHomePage> {
       });
 
       if (mounted && context.mounted) {
+        String errorMessage = 'アップロードエラーが発生しました';
+        if (e.toString().contains('TimeoutException')) {
+          errorMessage = '音声解析に時間がかかっています。処理を継続中です...';
+        }
+        
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('アップロードエラーが発生しました'),
-            duration: Duration(seconds: 2),
+          SnackBar(
+            content: Text(errorMessage),
+            duration: const Duration(seconds: 3),
           ),
         );
       }

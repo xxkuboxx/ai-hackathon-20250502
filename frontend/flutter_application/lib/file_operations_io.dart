@@ -2,6 +2,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' as http_parser;
 
 Future<bool> fileExists(String path) async {
   try {
@@ -34,9 +35,22 @@ Future<http.MultipartFile> createMultipartFileFromBytes(
   String filename,
   Uint8List bytes,
 ) async {
+  // ファイル拡張子に基づいてContent-Typeを決定
+  String contentType = 'audio/wav'; // デフォルト
+  if (filename.toLowerCase().endsWith('.wav')) {
+    contentType = 'audio/wav';
+  } else if (filename.toLowerCase().endsWith('.mp3')) {
+    contentType = 'audio/mpeg';
+  } else if (filename.toLowerCase().endsWith('.m4a')) {
+    contentType = 'audio/mp4';
+  } else if (filename.toLowerCase().endsWith('.aac')) {
+    contentType = 'audio/aac';
+  }
+
   return http.MultipartFile.fromBytes(
     fieldName,
     bytes,
     filename: filename,
+    contentType: http_parser.MediaType.parse(contentType),
   );
 }
