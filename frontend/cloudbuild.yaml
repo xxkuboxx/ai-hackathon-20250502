@@ -1,0 +1,52 @@
+steps:
+  # Dockerイメージをビルド
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--tag=us-east5-docker.pkg.dev/$PROJECT_ID/${_SERVICE_NAME}-repo/${_SERVICE_NAME}:latest'
+      - '--cache-from=us-east5-docker.pkg.dev/$PROJECT_ID/${_SERVICE_NAME}-repo/${_SERVICE_NAME}:latest'
+      - '.' # Dockerfileがあるディレクトリ (frontend/)
+    id: 'Build Docker image'
+    dir: 'frontend' # Dockerfileの場所に合わせて作業ディレクトリを指定
+
+  # イメージをArtifact Registryにプッシュ
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-east5-docker.pkg.dev/$PROJECT_ID/${_SERVICE_NAME}-repo/${_SERVICE_NAME}:latest']
+    id: 'Push image to Artifact Registry'
+    dir: 'frontend' # Dockerfileの場所に合わせて作業ディレクトリを指定
+
+  # Cloud Runにデプロイ
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}' # Cloud Runサービス名
+      - '--image=us-east5-docker.pkg.dev/$PROJECT_ID/${_SERVICE_NAME}-repo/${_SERVICE_NAME}:latest'
+      - '--platform=managed'
+      - '--region=${_REGION}'
+      - '--allow-unauthenticated' # 未認証の呼び出しを許可
+      # 以下はオプションです。必要に応じてコメントを解除し、値を調整してください。
+      # - '--port=8080' # コンテナがリッスンするポート (DockerfileでEXPOSEしているポートとは異なる場合や、明示したい場合)
+      # - '--min-instances=0'    # 最小インスタンス数
+      # - '--max-instances=2'    # 最大インスタンス数 (コスト管理のため、最初は小さく設定することを推奨)
+      # - '--memory=256Mi'       # メモリ
+      # - '--cpu=1'              # CPU
+      # - '--timeout=300'        # リクエストタイムアウト秒
+      # - '--concurrency=80'     # 1コンテナあたりの同時リクエスト数
+      # 環境変数を設定する場合
+      # - '--update-env-vars=KEY1=VALUE1,KEY2=VALUE2'
+      # - '--set-env-vars=KEY1=VALUE1,KEY2=VALUE2' # 既存の環境変数を全て置き換える場合
+    id: 'Deploy to Cloud Run'
+
+# Artifact Registryへのイメージ名
+images:
+  - 'us-east5-docker.pkg.dev/$PROJECT_ID/${_SERVICE_NAME}-repo/${_SERVICE_NAME}:latest'
+
+# 置換可能な変数
+substitutions:
+  _SERVICE_NAME: 'sessionmuse-frontend' # Cloud Runのサービス名 および Artifact Registryのリポジトリ名の一部として使用
+  _REGION: 'us-east5' # Cloud Runサービスをデプロイするリージョン
+
+# オプション: デプロイタイムアウト
+# timeout: 1200s
