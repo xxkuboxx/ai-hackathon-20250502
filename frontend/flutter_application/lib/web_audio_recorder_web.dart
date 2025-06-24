@@ -92,13 +92,13 @@ class WebAudioRecorderWeb {
       // MediaRecorderを設定
       _recordedChunks.clear();
 
-      // サポートされているMIMEタイプを確認（WAVを優先）
-      String mimeType = 'audio/wav';
+      // サポートされているMIMEタイプを確認（WebMを優先）
+      String mimeType = 'audio/webm';
       final supportedTypes = [
-        'audio/wav', // WAVを最優先
-        'audio/webm;codecs=opus',
-        'audio/webm',
-        'audio/mp4',
+        'audio/webm;codecs=opus', // WebM with Opus
+        'audio/webm',             // WebM形式
+        'audio/wav',              // WAV形式
+        'audio/mp4',              // MP4/AAC形式
       ];
 
       for (final type in supportedTypes) {

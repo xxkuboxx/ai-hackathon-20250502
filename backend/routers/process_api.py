@@ -12,11 +12,13 @@ from exceptions import (
     UnsupportedMediaTypeException,
     FileTooLargeException,
     InternalServerErrorException,
+    AudioConversionException,
     AnalysisFailedException, # Keep for direct raise if workflow contract violated
     GenerationFailedException # Keep for direct raise if workflow contract violated
 )
 from services.audio_analysis_service import run_audio_analysis_workflow, AudioAnalysisWorkflowState
 from services.gcs_service import GCSService, get_gcs_service
+from services.audio_conversion_service import AudioConversionService, AudioConversionError
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +34,12 @@ SUPPORTED_AUDIO_MIME_TYPES = [
     "audio/mp4",   # M4A (MPEG-4 Audio)
     "audio/x-m4a",   # M4A
     "audio/aac",   # AAC
+    "audio/webm",  # WebM
 ]
 
 @router.post("/process", response_model=ProcessResponse)
 async def process_audio_file(
-    file: Annotated[UploadFile, File(description="処理する音声ファイル (MP3, WAV, M4A, AAC)。")],
+    file: Annotated[UploadFile, File(description="処理する音声ファイル (MP3, WAV, M4A, AAC, WebM)。")],
     gcs_service: GCSService = Depends(get_gcs_service)
 ):
     # local_temp_file_path was unused and has been removed.
@@ -65,22 +68,63 @@ async def process_audio_file(
             original_file_extension = ".mp3"
         elif content_type in ["audio/wav", "audio/x-wav"]:
             original_file_extension = ".wav"
-        elif content_type in ["audio/wav", "audio/x-m4a"]:
+        elif content_type in ["audio/mp4", "audio/x-m4a"]:
             original_file_extension = ".m4a"
         elif content_type == "audio/aac":
             original_file_extension = ".aac"
+        elif content_type == "audio/webm":
+            original_file_extension = ".webm"
         else:
             # This case should ideally be caught by the SUPPORTED_AUDIO_MIME_TYPES check,
             # but as a fallback, use a generic extension.
             logger.warning(f"予期しないコンテントタイプ '{content_type}' のための拡張子を決定できません。'.dat' を使用します。")
             original_file_extension = ".dat"
 
-        gcs_blob_name_original = f"original/{file_id}{original_file_extension}"
+        # 音声形式変換（WebM/AACをWAVに変換）
+        processed_file_obj = file
+        processed_content_type = file.content_type
+        processed_extension = original_file_extension
+
+        if AudioConversionService.needs_conversion(file.content_type):
+            try:
+                logger.info(f"音声変換が必要です: {file.content_type}")
+
+                # ファイルデータを読み取り
+                file_data = await file.read()
+
+                # 音声変換実行
+                source_format = AudioConversionService.get_source_format_from_mime_type(file.content_type)
+                wav_data = AudioConversionService.convert_to_wav(file_data, source_format)
+
+                # 変換されたWAVデータで新しいUploadFileオブジェクトを作成
+                import io
+                from fastapi import UploadFile
+
+                wav_io = io.BytesIO(wav_data)
+                processed_file_obj = UploadFile(
+                    file=wav_io,
+                    filename=f"{file_id}.wav",
+                    headers={"content-type": "audio/wav"}
+                )
+                processed_content_type = "audio/wav"
+                processed_extension = ".wav"
+
+                logger.info(f"音声変換完了: {file.content_type} -> {processed_content_type}")
+
+            except AudioConversionError as e:
+                logger.error(f"音声変換エラー: {e}")
+                raise AudioConversionException(f"音声ファイルの変換に失敗しました: {str(e)}")
+            except Exception as e:
+                logger.error(f"予期しない音声変換エラー: {e}")
+                raise AudioConversionException(f"音声変換中にエラーが発生しました: {str(e)}")
+
+        # 変換後のファイルをGCSにアップロード
+        gcs_blob_name_original = f"original/{file_id}{processed_extension}"
 
         # GCSService is expected to raise GCSUploadErrorException on failure.
         gcs_original_file_uri = await gcs_service.upload_file_obj_to_gcs(
-            file_obj=file, bucket_name=settings.GCS_UPLOAD_BUCKET,
-            destination_blob_name=gcs_blob_name_original, content_type=file.content_type
+            file_obj=processed_file_obj, bucket_name=settings.GCS_UPLOAD_BUCKET,
+            destination_blob_name=gcs_blob_name_original, content_type=processed_content_type
         )
         # If gcs_original_file_uri is None here, it means upload_file_obj_to_gcs contract is violated (should return str or raise)
         # This should not happen if the service is implemented correctly.
