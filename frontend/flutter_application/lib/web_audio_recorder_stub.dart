@@ -27,6 +27,26 @@ class WebAudioRecorderWeb {
     // スタブ実装
   }
 
-  void dispose() {
+  void dispose() {}
+}
+
+// モバイル環境用のスタブクラス
+class WebAudioRecorder {
+  late final WebAudioRecorderWeb _impl;
+
+  WebAudioRecorder() {
+    _impl = WebAudioRecorderWeb();
   }
+
+  Stream<List<double>> get audioDataStream => _impl.audioDataStream;
+  Stream<bool> get playbackStateStream => _impl.playbackStateStream;
+  bool get isRecording => _impl.isRecording;
+  bool get isPlaying => _impl.isPlaying;
+
+  Future<bool> checkPermission() => _impl.checkPermission();
+  Future<bool> startRecording() => _impl.startRecording();
+  Future<Uint8List?> stopRecording() => _impl.stopRecording();
+  Future<void> playAudio(Uint8List audioData) => _impl.playAudio(audioData);
+  Future<void> stopAudio() => _impl.stopAudio();
+  void dispose() => _impl.dispose();
 }

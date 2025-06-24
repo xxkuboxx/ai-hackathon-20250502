@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' as http_parser;
 import 'dart:convert';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/foundation.dart';
@@ -88,8 +89,23 @@ class AudioProcessingService {
           webAudioData,
         );
       } else {
-        // モバイル環境：ファイルパスから作成
-        file = await http.MultipartFile.fromPath('file', filePath);
+        // モバイル環境：ファイルパスから作成（Content-Type明示）
+        String contentType = 'audio/wav'; // デフォルト
+        if (filePath.toLowerCase().endsWith('.m4a')) {
+          contentType = 'audio/mp4';
+        } else if (filePath.toLowerCase().endsWith('.mp3')) {
+          contentType = 'audio/mpeg';
+        } else if (filePath.toLowerCase().endsWith('.wav')) {
+          contentType = 'audio/wav';
+        } else if (filePath.toLowerCase().endsWith('.aac')) {
+          contentType = 'audio/aac';
+        }
+
+        file = await http.MultipartFile.fromPath(
+          'file',
+          filePath,
+          contentType: http_parser.MediaType.parse(contentType),
+        );
       }
       request.files.add(file);
 
@@ -98,11 +114,16 @@ class AudioProcessingService {
 
       if (response.statusCode == 200) {
         var responseBody = await response.stream.bytesToString();
+        if (kDebugMode) print('API Response Body: $responseBody');
         var jsonData = json.decode(responseBody);
 
         return AudioAnalysisResult.fromJson(jsonData);
       } else {
-        if (kDebugMode) print('API Error: ${response.statusCode}');
+        var responseBody = await response.stream.bytesToString();
+        if (kDebugMode) {
+          print('API Error: ${response.statusCode}');
+          print('Error Response Body: $responseBody');
+        }
         return null;
       }
     } catch (e) {

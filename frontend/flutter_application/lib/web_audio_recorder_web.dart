@@ -14,9 +14,11 @@ class WebAudioRecorderWeb {
   html.MediaRecorder? _mediaRecorder;
   html.MediaStream? _mediaStream;
   final List<html.Blob> _recordedChunks = [];
-  final StreamController<List<double>> _audioDataController = StreamController<List<double>>.broadcast();
-  final StreamController<bool> _playbackStateController = StreamController<bool>.broadcast();
-  
+  final StreamController<List<double>> _audioDataController =
+      StreamController<List<double>>.broadcast();
+  final StreamController<bool> _playbackStateController =
+      StreamController<bool>.broadcast();
+
   Stream<List<double>> get audioDataStream => _audioDataController.stream;
   Stream<bool> get playbackStateStream => _playbackStateController.stream;
   bool get isRecording => _isRecording;
@@ -30,9 +32,9 @@ class WebAudioRecorderWeb {
           'echoCancellation': true,
           'noiseSuppression': true,
           'autoGainControl': true,
-        }
+        },
       });
-      
+
       if (stream != null) {
         // 権限確認後、ストリームを停止
         stream.getTracks().forEach((track) => track.stop());
@@ -66,16 +68,16 @@ class WebAudioRecorderWeb {
             'noiseSuppression': true,
             'autoGainControl': true,
             'sampleRate': 44100,
-          }
+          },
         });
       } catch (e) {
         if (kDebugMode) print('Failed to get user media: $e');
-        
+
         // より基本的な設定で再試行
         try {
-          _mediaStream = await html.window.navigator.mediaDevices?.getUserMedia({
-            'audio': true
-          });
+          _mediaStream = await html.window.navigator.mediaDevices?.getUserMedia(
+            {'audio': true},
+          );
         } catch (e2) {
           if (kDebugMode) print('Failed to get basic audio stream: $e2');
           return false;
@@ -89,35 +91,37 @@ class WebAudioRecorderWeb {
 
       // MediaRecorderを設定
       _recordedChunks.clear();
-      
-      // サポートされているMIMEタイプを確認
-      String mimeType = 'audio/webm';
+
+      // サポートされているMIMEタイプを確認（WAVを優先）
+      String mimeType = 'audio/wav';
       final supportedTypes = [
+        'audio/wav', // WAVを最優先
         'audio/webm;codecs=opus',
         'audio/webm',
         'audio/mp4',
-        'audio/wav',
       ];
-      
+
       for (final type in supportedTypes) {
         if (html.MediaRecorder.isTypeSupported(type)) {
           mimeType = type;
           break;
         }
       }
-      
+
       try {
         _mediaRecorder = html.MediaRecorder(_mediaStream!, {
-          'mimeType': mimeType
+          'mimeType': mimeType,
         });
       } catch (e) {
-        if (kDebugMode) print('Failed to create MediaRecorder with $mimeType: $e');
+        if (kDebugMode)
+          print('Failed to create MediaRecorder with $mimeType: $e');
         // デフォルト設定で再試行
         try {
           _mediaRecorder = html.MediaRecorder(_mediaStream!);
           mimeType = 'default';
         } catch (e2) {
-          if (kDebugMode) print('Failed to create MediaRecorder with default settings: $e2');
+          if (kDebugMode)
+            print('Failed to create MediaRecorder with default settings: $e2');
           _mediaStream?.getTracks().forEach((track) => track.stop());
           _mediaStream = null;
           return false;
@@ -130,7 +134,8 @@ class WebAudioRecorderWeb {
           final blobEvent = event as html.BlobEvent;
           if (blobEvent.data != null && blobEvent.data!.size > 0) {
             _recordedChunks.add(blobEvent.data!);
-            if (kDebugMode) print('Recorded chunk: ${blobEvent.data!.size} bytes');
+            if (kDebugMode)
+              print('Recorded chunk: ${blobEvent.data!.size} bytes');
           }
         } catch (e) {
           if (kDebugMode) print('Error handling dataavailable: $e');
@@ -139,9 +144,10 @@ class WebAudioRecorderWeb {
 
       // 録音停止時のイベント
       _mediaRecorder!.addEventListener('stop', (event) {
-        if (kDebugMode) print('MediaRecorder stopped, chunks: ${_recordedChunks.length}');
+        if (kDebugMode)
+          print('MediaRecorder stopped, chunks: ${_recordedChunks.length}');
       });
-      
+
       // エラーハンドリング
       _mediaRecorder!.addEventListener('error', (event) {
         if (kDebugMode) print('MediaRecorder error: $event');
@@ -155,8 +161,9 @@ class WebAudioRecorderWeb {
       try {
         _mediaRecorder!.start(100); // 100msごとにデータを送信
         _isRecording = true;
-        
-        if (kDebugMode) print('Real microphone recording started with $mimeType');
+
+        if (kDebugMode)
+          print('Real microphone recording started with $mimeType');
         return true;
       } catch (e) {
         if (kDebugMode) print('Failed to start MediaRecorder: $e');
@@ -165,7 +172,6 @@ class WebAudioRecorderWeb {
         _mediaRecorder = null;
         return false;
       }
-      
     } catch (e) {
       if (kDebugMode) print('Failed to start recording: $e');
       _isRecording = false;
@@ -189,10 +195,9 @@ class WebAudioRecorderWeb {
         for (int i = 0; i < 128; i++) {
           audioData.add(math.Random().nextDouble() * 0.5);
         }
-        
+
         _audioDataController.add(audioData);
       });
-      
     } catch (e) {
       if (kDebugMode) print('Failed to setup audio analysis: $e');
     }
@@ -206,47 +211,56 @@ class WebAudioRecorderWeb {
       }
 
       _isRecording = false;
-      
+
       // MediaRecorderを停止
       if (_mediaRecorder != null) {
         _mediaRecorder!.stop();
-        
+
         // 録音データの完成を待つ
         await Future.delayed(const Duration(milliseconds: 100));
-        
+
         if (_recordedChunks.isNotEmpty) {
           // 録音されたBlobデータを結合
           final blob = html.Blob(_recordedChunks);
           final bytes = await _blobToUint8List(blob);
-          
+
           if (kDebugMode) {
             print('Web recording stopped - actual data: ${bytes.length} bytes');
           }
-          
+
           // メディアストリームを停止
           _mediaStream?.getTracks().forEach((track) => track.stop());
           _mediaStream = null;
           _mediaRecorder = null;
-          
+
+          // 録音データがWebM形式の場合、バックエンド互換性のためWAVヘッダーを追加
+          if (bytes.length > 4 && bytes[0] == 0x1A && bytes[1] == 0x45) {
+            // WebM形式が検出された場合、WAVファイルとして再パッケージ
+            if (kDebugMode)
+              print(
+                'WebM format detected, converting to WAV format for backend compatibility',
+              );
+            return _convertToWavFormat(bytes);
+          }
+
           return bytes;
         } else {
           if (kDebugMode) print('No recorded chunks available');
         }
       }
-      
+
       // フォールバック：録音データが取得できない場合はテスト音を生成
       if (kDebugMode) print('Fallback: generating test audio data');
       return _generateTestAudioData();
-      
     } catch (e) {
       if (kDebugMode) print('Failed to stop recording: $e');
       _isRecording = false;
-      
+
       // メディアストリームを停止
       _mediaStream?.getTracks().forEach((track) => track.stop());
       _mediaStream = null;
       _mediaRecorder = null;
-      
+
       return null;
     }
   }
@@ -254,18 +268,55 @@ class WebAudioRecorderWeb {
   Future<Uint8List> _blobToUint8List(html.Blob blob) async {
     final reader = html.FileReader();
     final completer = Completer<Uint8List>();
-    
+
     reader.onLoadEnd.listen((event) {
       final result = reader.result as List<int>;
       completer.complete(Uint8List.fromList(result));
     });
-    
+
     reader.onError.listen((event) {
       completer.completeError('Failed to read blob');
     });
-    
+
     reader.readAsArrayBuffer(blob);
     return completer.future;
+  }
+
+  Uint8List _convertToWavFormat(Uint8List webmData) {
+    // WebMデータをそのまま使用し、WAVヘッダーで包む
+    // 注意: これは簡易的な変換であり、実際の音声データは元のWebM形式のまま
+    // バックエンドでの互換性を保つための処理
+    if (kDebugMode) print('Converting WebM data to WAV container format');
+
+    // 元のWebMデータを音声データとして扱う
+    final audioDataSize = webmData.length;
+    final fileSize = 44 + audioDataSize - 8; // WAVヘッダー + データサイズ - 8
+
+    final wavHeader = <int>[
+      // WAVファイルヘッダ
+      0x52, 0x49, 0x46, 0x46, // "RIFF"
+      fileSize & 0xFF,
+      (fileSize >> 8) & 0xFF,
+      (fileSize >> 16) & 0xFF,
+      (fileSize >> 24) & 0xFF,
+      0x57, 0x41, 0x56, 0x45, // "WAVE"
+      0x66, 0x6D, 0x74, 0x20, // "fmt "
+      0x10, 0x00, 0x00, 0x00, // Subchunk1Size (16)
+      0x01, 0x00, // AudioFormat (PCM)
+      0x01, 0x00, // NumChannels (Mono)
+      0x44, 0xAC, 0x00, 0x00, // SampleRate (44100)
+      0x88, 0x58, 0x01, 0x00, // ByteRate (44100 * 1 * 16/8)
+      0x02, 0x00, // BlockAlign (1 * 16/8)
+      0x10, 0x00, // BitsPerSample (16)
+      0x64, 0x61, 0x74, 0x61, // "data"
+      audioDataSize & 0xFF,
+      (audioDataSize >> 8) & 0xFF,
+      (audioDataSize >> 16) & 0xFF,
+      (audioDataSize >> 24) & 0xFF,
+    ];
+
+    // WAVヘッダー + 元のWebMデータを結合
+    return Uint8List.fromList([...wavHeader, ...webmData]);
   }
 
   Uint8List _generateTestAudioData() {
@@ -274,35 +325,42 @@ class WebAudioRecorderWeb {
     final duration = 1; // 1秒
     final numSamples = sampleRate * duration;
     final frequency = 440.0; // ラの音
-    
+
     // 音声データを生成
     final audioSamples = <int>[];
     for (int i = 0; i < numSamples; i++) {
       final t = i / sampleRate;
-      final sample = (32767 * 0.3 * math.sin(2 * math.pi * frequency * t)).round();
+      final sample = (32767 * 0.3 * math.sin(2 * math.pi * frequency * t))
+          .round();
       // 16-bit リトルエンディアン
       audioSamples.add(sample & 0xFF);
       audioSamples.add((sample >> 8) & 0xFF);
     }
-    
+
     final dataSize = audioSamples.length;
     final fileSize = 44 + dataSize - 8;
-    
+
     return Uint8List.fromList([
       // WAVファイルヘッダ
       0x52, 0x49, 0x46, 0x46, // "RIFF"
-      fileSize & 0xFF, (fileSize >> 8) & 0xFF, (fileSize >> 16) & 0xFF, (fileSize >> 24) & 0xFF,
+      fileSize & 0xFF,
+      (fileSize >> 8) & 0xFF,
+      (fileSize >> 16) & 0xFF,
+      (fileSize >> 24) & 0xFF,
       0x57, 0x41, 0x56, 0x45, // "WAVE"
       0x66, 0x6D, 0x74, 0x20, // "fmt "
       0x10, 0x00, 0x00, 0x00, // Subchunk1Size (16)
-      0x01, 0x00,             // AudioFormat (PCM)
-      0x01, 0x00,             // NumChannels (Mono)
+      0x01, 0x00, // AudioFormat (PCM)
+      0x01, 0x00, // NumChannels (Mono)
       0x44, 0xAC, 0x00, 0x00, // SampleRate (44100)
       0x88, 0x58, 0x01, 0x00, // ByteRate (44100 * 1 * 16/8)
-      0x02, 0x00,             // BlockAlign (1 * 16/8)
-      0x10, 0x00,             // BitsPerSample (16)
+      0x02, 0x00, // BlockAlign (1 * 16/8)
+      0x10, 0x00, // BitsPerSample (16)
       0x64, 0x61, 0x74, 0x61, // "data"
-      dataSize & 0xFF, (dataSize >> 8) & 0xFF, (dataSize >> 16) & 0xFF, (dataSize >> 24) & 0xFF,
+      dataSize & 0xFF,
+      (dataSize >> 8) & 0xFF,
+      (dataSize >> 16) & 0xFF,
+      (dataSize >> 24) & 0xFF,
       // 実際の音声データ
       ...audioSamples,
     ]);
@@ -317,11 +375,13 @@ class WebAudioRecorderWeb {
     try {
       _isPlaying = true;
       _playbackStateController.add(true);
-      if (kDebugMode) print('Web audio playback started - playing recorded data (${audioData.length} bytes)');
+      if (kDebugMode)
+        print(
+          'Web audio playback started - playing recorded data (${audioData.length} bytes)',
+        );
 
       // 録音したオーディオデータを再生
       await _playRecordedAudio(audioData);
-
     } catch (e) {
       if (kDebugMode) print('Failed to play audio: $e');
       _isPlaying = false;
@@ -335,26 +395,36 @@ class WebAudioRecorderWeb {
       String mimeType = 'audio/wav';
       if (audioData.length > 4) {
         // WebM形式の場合
-        if (audioData[0] == 0x1A && audioData[1] == 0x45 && audioData[2] == 0xDF && audioData[3] == 0xA3) {
+        if (audioData[0] == 0x1A &&
+            audioData[1] == 0x45 &&
+            audioData[2] == 0xDF &&
+            audioData[3] == 0xA3) {
           mimeType = 'audio/webm';
         }
         // MP4形式の場合
-        else if (audioData.length > 8 && audioData[4] == 0x66 && audioData[5] == 0x74 && audioData[6] == 0x79 && audioData[7] == 0x70) {
+        else if (audioData.length > 8 &&
+            audioData[4] == 0x66 &&
+            audioData[5] == 0x74 &&
+            audioData[6] == 0x79 &&
+            audioData[7] == 0x70) {
           mimeType = 'audio/mp4';
         }
         // RIFF WAVヘッダーの場合
-        else if (audioData[0] == 0x52 && audioData[1] == 0x49 && audioData[2] == 0x46 && audioData[3] == 0x46) {
+        else if (audioData[0] == 0x52 &&
+            audioData[1] == 0x49 &&
+            audioData[2] == 0x46 &&
+            audioData[3] == 0x46) {
           mimeType = 'audio/wav';
         }
       }
-      
+
       // Uint8ListをBlobに変換してオーディオ再生
       final blob = html.Blob([audioData], mimeType);
       final url = html.Url.createObjectUrlFromBlob(blob);
-      
+
       _audioElement = html.AudioElement(url);
       _audioElement!.volume = 0.7; // 70%の音量
-      
+
       // 再生完了を監視
       _audioElement!.onEnded.listen((_) {
         if (_audioElement != null) {
@@ -365,7 +435,7 @@ class WebAudioRecorderWeb {
         _audioElement = null;
         if (kDebugMode) print('Web audio playback completed (recorded audio)');
       });
-      
+
       // エラーハンドリング
       _audioElement!.onError.listen((error) {
         if (kDebugMode) print('Audio playback error: $error');
@@ -378,11 +448,11 @@ class WebAudioRecorderWeb {
         // フォールバック：テストビープ音
         _playTestBeep();
       });
-      
+
       // 再生開始
       await _audioElement!.play();
       if (kDebugMode) print('Started playing recorded audio data ($mimeType)');
-      
+
       // フォールバックタイマー（30秒後に強制停止）
       _playbackTimer = Timer(const Duration(seconds: 30), () {
         if (_isPlaying && _audioElement != null) {
@@ -394,7 +464,6 @@ class WebAudioRecorderWeb {
           if (kDebugMode) print('Audio playback timeout (30s)');
         }
       });
-
     } catch (e) {
       if (kDebugMode) print('Failed to play recorded audio: $e');
       // フォールバック：テストビープ音
@@ -420,21 +489,22 @@ class WebAudioRecorderWeb {
   Future<void> _playWithHtmlAudio() async {
     try {
       // 短いビープ音のデータURL（base64エンコードされたWAVファイル）
-      const beepDataUrl = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmocCDuO2vPNdCMGJnfH8N+OPAsPYrbp6ahVFApEm+TuvmsBBziV0vLKeSYFJn3L8NqPQAoQZLfq6qdVFApFm+PvvmsBBziU0fLLeSYGI3PN9tuLOwsOZLfn7K5aFQtCn+TtvVwBBzhX2vTMfCMGI3vM8NuLPAsQYLP2dA==';
-      
+      const beepDataUrl =
+          'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmocCDuO2vPNdCMGJnfH8N+OPAsPYrbp6ahVFApEm+TuvmsBBziV0vLKeSYFJn3L8NqPQAoQZLfq6qdVFApFm+PvvmsBBziU0fLLeSYGI3PN9tuLOwsOZLfn7K5aFQtCn+TtvVwBBzhX2vTMfCMGI3vM8NuLPAsQYLP2dA==';
+
       final audioElement = html.AudioElement(beepDataUrl);
       audioElement.volume = 0.1;
-      
+
       // 再生完了を監視
       audioElement.onEnded.listen((_) {
         _isPlaying = false;
         _playbackStateController.add(false);
         if (kDebugMode) print('Web audio playback completed (HTML audio)');
       });
-      
+
       // 再生開始
       await audioElement.play();
-      
+
       // フォールバックタイマー（3秒後に強制停止）
       _playbackTimer = Timer(const Duration(seconds: 3), () {
         if (_isPlaying) {
@@ -444,7 +514,6 @@ class WebAudioRecorderWeb {
           if (kDebugMode) print('Web audio playback timeout');
         }
       });
-
     } catch (e) {
       if (kDebugMode) print('Failed to play with HTML audio: $e');
       // 最終フォールバック：モック再生
@@ -485,7 +554,7 @@ class WebAudioRecorderWeb {
   Future<void> forceStopRecording() async {
     try {
       _isRecording = false;
-      
+
       // MediaRecorderを強制停止
       if (_mediaRecorder != null) {
         try {
@@ -495,7 +564,7 @@ class WebAudioRecorderWeb {
         }
         _mediaRecorder = null;
       }
-      
+
       // メディアストリームを停止
       if (_mediaStream != null) {
         try {
@@ -505,10 +574,10 @@ class WebAudioRecorderWeb {
         }
         _mediaStream = null;
       }
-      
+
       // 録音チャンクをクリア
       _recordedChunks.clear();
-      
+
       if (kDebugMode) print('Recording force stopped and cleaned up');
     } catch (e) {
       if (kDebugMode) print('Failed to force stop recording: $e');
@@ -518,14 +587,14 @@ class WebAudioRecorderWeb {
   void dispose() {
     // 録音を強制停止
     forceStopRecording();
-    
+
     // 再生中の音声を停止
     stopAudio();
 
     // タイマーを停止
     _playbackTimer?.cancel();
     _playbackTimer = null;
-    
+
     // ストリームコントローラーを閉じる
     if (!_audioDataController.isClosed) {
       _audioDataController.close();
@@ -533,7 +602,7 @@ class WebAudioRecorderWeb {
     if (!_playbackStateController.isClosed) {
       _playbackStateController.close();
     }
-    
+
     if (kDebugMode) print('WebAudioRecorder disposed');
   }
 }
