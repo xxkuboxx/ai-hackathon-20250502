@@ -472,24 +472,6 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         );
       }
-    } else if (_recordingState == RecordingState.uploading) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.cloud_upload, color: Colors.blue, size: 24),
-            SizedBox(height: 8),
-            Text(
-              '音声解析中...',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: Colors.blue,
-              ),
-            ),
-          ],
-        ),
-      );
     } else {
       return const Center(
         child: Text(
@@ -818,6 +800,8 @@ class _MyHomePageState extends State<MyHomePage> {
                     child: Column(
                       children: [
                         _buildRecordingSection(),
+                        if (_recordingState == RecordingState.uploading)
+                          _buildUploadingIndicator(),
                         const SizedBox(height: 16),
                         _buildAnalysisResults(),
                         if (_isAnalyzed) const SizedBox(height: 16),
@@ -1387,6 +1371,30 @@ class _MyHomePageState extends State<MyHomePage> {
       backgroundColor: Colors.green.shade50,
       shape: StadiumBorder(
         side: BorderSide(color: Colors.green.shade200, width: 1.0),
+      ),
+    );
+  }
+
+  Widget _buildUploadingIndicator() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 16.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          SizedBox(width: 12),
+          Text(
+            'AIが解析中です...',
+            style: TextStyle(
+              color: Colors.blue,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
       ),
     );
   }
