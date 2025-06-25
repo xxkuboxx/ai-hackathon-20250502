@@ -244,6 +244,10 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   late AnimationController _loadingAnimationController;
   late AnimationController _chatLoadingAnimationController;
 
+  // レスポンシブデザインヘルパー
+  bool get _isSmallScreen => MediaQuery.of(context).size.height < 600;
+  double get _responsiveSpacing => _isSmallScreen ? 8.0 : 16.0;
+
   // 状態管理
   bool _isAnalyzed = false;
   bool _isPlaying = false;
@@ -813,16 +817,16 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                       ),
                     ),
                   ),
-                  child: Padding(
+                  child: SingleChildScrollView(
                     padding: const EdgeInsets.all(16.0),
                     child: Column(
                       children: [
                         _buildRecordingSection(),
                         if (_recordingState == RecordingState.uploading)
                           _buildUploadingIndicator(),
-                        const SizedBox(height: 16),
+                        SizedBox(height: _responsiveSpacing),
                         _buildAnalysisResults(),
-                        if (_isAnalyzed) const SizedBox(height: 16),
+                        if (_isAnalyzed) SizedBox(height: _responsiveSpacing),
                         _buildBackingTrackPlayer(),
                       ],
                     ),
@@ -878,12 +882,12 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: _responsiveSpacing),
           Row(
             children: [
               Container(
-                width: 50,
-                height: 50,
+                width: math.min(50, MediaQuery.of(context).size.width * 0.12),
+                height: math.min(50, MediaQuery.of(context).size.width * 0.12),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: _recordingState == RecordingState.recording
@@ -928,8 +932,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
               // 録音データ再生ボタン
               Container(
-                width: 50,
-                height: 50,
+                width: math.min(50, MediaQuery.of(context).size.width * 0.12),
+                height: math.min(50, MediaQuery.of(context).size.width * 0.12),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: _isPlaying
@@ -964,9 +968,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: _responsiveSpacing),
           Container(
-            height: 60,
+            height: math.min(60, MediaQuery.of(context).size.height * 0.08),
             decoration: BoxDecoration(
               color: Colors.grey.shade100,
               borderRadius: BorderRadius.circular(8.0),
@@ -974,7 +978,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             ),
             child: _buildWaveformWidget(),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: _responsiveSpacing),
         ],
       ),
     );
@@ -1057,7 +1061,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           Column(
             children: [
               Container(
-                height: 60,
+                height: math.min(60, MediaQuery.of(context).size.height * 0.08),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(8.0),
@@ -1395,8 +1399,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           SizedBox(
-            width: 80,
-            height: 80,
+            width: math.min(80, MediaQuery.of(context).size.width * 0.2),
+            height: math.min(80, MediaQuery.of(context).size.width * 0.2),
             child: _buildCustomLoadingAnimation(),
           ),
           const SizedBox(height: 8),
