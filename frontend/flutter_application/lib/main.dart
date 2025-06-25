@@ -983,37 +983,41 @@ class _MyHomePageState extends State<MyHomePage> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20.0),
+      padding: const EdgeInsets.all(16.0),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12.0),
-        border: Border.all(color: Colors.green.shade300, width: 2.0),
+        border: Border.all(color: Colors.green.shade300, width: 1.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.analytics, color: Colors.green, size: 24),
+              const Icon(Icons.analytics, color: Colors.green, size: 20),
               const SizedBox(width: 8),
               const Text(
                 'AIによる解析結果',
                 style: TextStyle(
-                  fontSize: 18,
+                  fontSize: 16,
                   fontWeight: FontWeight.bold,
                   color: Colors.green,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          _buildAnalysisRow('Key', _analysisResult?.key ?? 'C Major'),
-          _buildAnalysisRow('BPM', _analysisResult?.bpm.toString() ?? '120'),
-          _buildAnalysisRow(
-            'Chords',
-            _analysisResult?.chords ?? 'C | G | Am | F',
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8.0,
+            runSpacing: 4.0,
+            children: [
+              _buildAnalysisChip('Key', _analysisResult?.key ?? 'C Major'),
+              _buildAnalysisChip('BPM', _analysisResult?.bpm.toString() ?? '120'),
+              _buildAnalysisChip(
+                  'Chords', _analysisResult?.chords ?? 'C | G | Am | F'),
+              _buildAnalysisChip('Genre', _analysisResult?.genre ?? 'Rock'),
+            ],
           ),
-          _buildAnalysisRow('Genre by AI', _analysisResult?.genre ?? 'Rock'),
         ],
       ),
     );
@@ -1059,29 +1063,29 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
                 child:
                     _audioFilePath != null && !isWeb && playerController != null
-                    ? AudioFileWaveforms(
-                        playerController: playerController!,
-                        size: Size(MediaQuery.of(context).size.width - 80, 60),
-                        playerWaveStyle: const PlayerWaveStyle(
-                          seekLineColor: Colors.orange,
-                          showSeekLine: true,
-                          waveCap: StrokeCap.round,
-                        ),
-                        waveformType: WaveformType.fitWidth,
-                      )
-                    : Center(
-                        child: Text(
-                          _audioFilePath != null
-                              ? (isWeb
-                                    ? '録音データ: ${_audioFilePath!.split('/').last}'
-                                    : '録音完了後に波形が表示されます')
-                              : '録音完了後に波形が表示されます',
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontSize: 12,
+                        ? AudioFileWaveforms(
+                            playerController: playerController!,
+                            size: Size(MediaQuery.of(context).size.width - 80, 60),
+                            playerWaveStyle: const PlayerWaveStyle(
+                              seekLineColor: Colors.orange,
+                              showSeekLine: true,
+                              waveCap: StrokeCap.round,
+                            ),
+                            waveformType: WaveformType.fitWidth,
+                          )
+                        : Center(
+                            child: Text(
+                              _audioFilePath != null
+                                  ? (isWeb
+                                      ? '録音データ: ${_audioFilePath!.split('/').last}'
+                                      : '録音完了後に波形が表示されます')
+                                  : '録音完了後に波形が表示されます',
+                              style: const TextStyle(
+                                color: Colors.grey,
+                                fontSize: 12,
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
               ),
               const SizedBox(height: 16),
               Row(
@@ -1360,40 +1364,29 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  Widget _buildAnalysisRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              '- $label:',
-              style: const TextStyle(
-                fontWeight: FontWeight.w500,
-                color: Colors.grey,
-              ),
-            ),
+  Widget _buildAnalysisChip(String label, String value) {
+    return Chip(
+      avatar: CircleAvatar(
+        backgroundColor: Colors.green.shade100,
+        child: Text(
+          label.substring(0, 1),
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Colors.green,
+            fontSize: 12,
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12.0,
-              vertical: 4.0,
-            ),
-            decoration: BoxDecoration(
-              color: Colors.green.shade100,
-              borderRadius: BorderRadius.circular(16.0),
-              border: Border.all(color: Colors.green.shade300, width: 1.0),
-            ),
-            child: Text(
-              value,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.green,
-              ),
-            ),
-          ),
-        ],
+        ),
+      ),
+      label: Text(
+        '$label: $value',
+        style: const TextStyle(
+          color: Colors.black87,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      backgroundColor: Colors.green.shade50,
+      shape: StadiumBorder(
+        side: BorderSide(color: Colors.green.shade200, width: 1.0),
       ),
     );
   }
