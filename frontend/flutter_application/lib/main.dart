@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:math' as math;
 import 'file_operations_io.dart'
     if (dart.library.html) 'file_operations_web.dart';
 import 'web_audio_recorder.dart'
@@ -224,7 +225,7 @@ class MyHomePage extends StatefulWidget {
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   String? _audioFilePath;
   late final RecorderController? _recorderController;
   late final PlayerController? playerController;
@@ -238,6 +239,10 @@ class _MyHomePageState extends State<MyHomePage> {
   final List<ChatMessageModel> _chatHistory = [];
   final ScrollController _scrollController = ScrollController();
   bool _isLoadingResponse = false;
+  
+  // Animation controllers
+  late AnimationController _loadingAnimationController;
+  late AnimationController _chatLoadingAnimationController;
 
   // 状態管理
   bool _isAnalyzed = false;
@@ -258,6 +263,17 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+
+    // Animation controllers initialization
+    _loadingAnimationController = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    )..repeat();
+    
+    _chatLoadingAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    )..repeat();
 
     // プラットフォームに応じた初期化
     if (isWeb) {
@@ -293,10 +309,12 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   void dispose() {
-    super.dispose();
+    _loadingAnimationController.dispose();
+    _chatLoadingAnimationController.dispose();
     _recorderController?.dispose();
     playerController?.dispose();
     _webAudioRecorder?.dispose();
+    super.dispose();
   }
 
   void _sendMessage() async {
@@ -1191,14 +1209,9 @@ class _MyHomePageState extends State<MyHomePage> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.purple.shade300,
-                                  ),
-                                ),
+                                width: 32,
+                                height: 32,
+                                child: _buildMiniLoadingAnimation(),
                               ),
                               const SizedBox(width: 8),
                               const Text(
@@ -1376,28 +1389,245 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Widget _buildUploadingIndicator() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 16.0),
-      child: Row(
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16.0),
+      child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
+            width: 80,
+            height: 80,
+            child: _buildCustomLoadingAnimation(),
           ),
-          SizedBox(width: 12),
-          Text(
+          const SizedBox(height: 8),
+          const Text(
             'AIが解析中です...',
             style: TextStyle(
               color: Colors.blue,
               fontWeight: FontWeight.bold,
+              fontSize: 16,
             ),
           ),
         ],
       ),
     );
   }
+
+  Widget _buildCustomLoadingAnimation() {
+    return AnimatedBuilder(
+      animation: _loadingAnimationController,
+      builder: (context, child) {
+        final value = _loadingAnimationController.value;
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            // Outer pulsing hexagon
+            Transform.rotate(
+              angle: value * 6.28318,
+              child: Container(
+                width: 70,
+                height: 70,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFF00D4FF).withValues(alpha: 0.6),
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00D4FF).withValues(alpha: 0.3),
+                      blurRadius: 8,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            
+            // Middle rotating ring with gradient effect
+            Transform.rotate(
+              angle: -value * 4.71, // 3/4 speed in opposite direction
+              child: Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      const Color(0xFF6366F1),
+                      const Color(0xFF8B5CF6),
+                      const Color(0xFFEC4899),
+                      const Color(0xFF06B6D4),
+                    ],
+                    stops: const [0.0, 0.33, 0.66, 1.0],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    transform: GradientRotation(value * 6.28318),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF8B5CF6).withValues(alpha: 0.4),
+                      blurRadius: 6,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: Container(
+                  margin: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+            
+            // Inner data particles
+            ...List.generate(6, (index) {
+              final particleAngle = (index * 1.047) + (value * 8.377); // π/3 spacing, faster rotation
+              final radius = 15.0 + (3.0 * math.sin(value * 6.28 + index));
+              final particleSize = 3.0 + (1.5 * math.sin(value * 12.56 + index * 2));
+              final opacity = 0.7 + (0.3 * math.sin(value * 10 + index));
+              
+              return Transform.translate(
+                offset: Offset(
+                  radius * math.cos(particleAngle),
+                  radius * math.sin(particleAngle),
+                ),
+                child: Container(
+                  width: particleSize,
+                  height: particleSize,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF00F5FF).withValues(alpha: opacity),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00F5FF).withValues(alpha: 0.6),
+                        blurRadius: 3,
+                        spreadRadius: 0.5,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+            
+            // Central AI core with matrix effect
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    const Color(0xFF00F5FF).withValues(alpha: 0.9),
+                    const Color(0xFF6366F1).withValues(alpha: 0.7),
+                    const Color(0xFF1E293B).withValues(alpha: 0.9),
+                  ],
+                  stops: const [0.0, 0.6, 1.0],
+                ),
+                border: Border.all(
+                  color: const Color(0xFF00D4FF).withValues(alpha: 0.8),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00F5FF).withValues(alpha: 0.5),
+                    blurRadius: 8,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.memory,
+                size: 16,
+                color: Colors.white.withValues(alpha: 0.9 + 0.1 * math.sin(value * 10)),
+              ),
+            ),
+            
+            // Scanning lines effect
+            Positioned.fill(
+              child: ClipOval(
+                child: CustomPaint(
+                  painter: ScanLinesPainter(animationValue: value),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildMiniLoadingAnimation() {
+    return AnimatedBuilder(
+      animation: _chatLoadingAnimationController,
+      builder: (context, child) {
+        final value = _chatLoadingAnimationController.value;
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(3, (index) {
+            final delay = index * 0.33;
+            final adjustedValue = ((value + delay) % 1.0);
+            final opacity = 0.3 + 0.7 * math.sin(adjustedValue * math.pi);
+            final scale = 0.5 + 0.5 * math.sin(adjustedValue * math.pi);
+            final colors = [Colors.purple, Colors.blue, Colors.teal];
+            
+            return Transform.scale(
+              scale: scale,
+              child: Container(
+                width: 6,
+                height: 6,
+                margin: const EdgeInsets.symmetric(horizontal: 2),
+                decoration: BoxDecoration(
+                  color: colors[index].withValues(alpha: opacity),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: colors[index].withValues(alpha: 0.3),
+                      blurRadius: 2,
+                      spreadRadius: 0.5,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
+
+class ScanLinesPainter extends CustomPainter {
+  final double animationValue;
+
+  ScanLinesPainter({required this.animationValue});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFF00F5FF).withValues(alpha: 0.3)
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+
+    // Draw scanning lines
+    for (int i = 0; i < 3; i++) {
+      final angle = (animationValue * 6.28318) + (i * 2.094); // 120° apart
+      final startAngle = angle - 0.52; // 30° sweep
+      final sweepAngle = 1.047; // 60° sweep
+
+      final rect = Rect.fromCircle(center: center, radius: radius);
+      canvas.drawArc(rect, startAngle, sweepAngle, false, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(ScanLinesPainter oldDelegate) =>
+      oldDelegate.animationValue != animationValue;
 }
 
 class ChatMessage {
