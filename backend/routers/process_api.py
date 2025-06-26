@@ -19,6 +19,7 @@ from exceptions import (
 from services.audio_analysis_service import run_audio_analysis_workflow, AudioAnalysisWorkflowState
 from services.gcs_service import GCSService, get_gcs_service
 from services.audio_conversion_service import AudioConversionService, AudioConversionError
+from services.audio_synthesis_service import AudioSynthesisService, get_audio_synthesis_service
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,8 @@ SUPPORTED_AUDIO_MIME_TYPES = [
 @router.post("/process", response_model=ProcessResponse)
 async def process_audio_file(
     file: Annotated[UploadFile, File(description="処理する音声ファイル (MP3, WAV, M4A, AAC, WebM)。")],
-    gcs_service: GCSService = Depends(get_gcs_service)
+    gcs_service: GCSService = Depends(get_gcs_service),
+    audio_synthesis_service: AudioSynthesisService = Depends(get_audio_synthesis_service)
 ):
     # local_temp_file_path was unused and has been removed.
     try:
@@ -165,9 +167,24 @@ async def process_audio_file(
             content_type="application/vnd.recordare.musicxml+xml" # MusicXMLのMIMEタイプ
         )
 
+        # MusicXMLからMP3への変換
+        logger.info(f"MusicXMLからMP3への変換を開始します。ファイルID: {file_id}")
+        generated_mp3_data = await audio_synthesis_service.synthesize_musicxml_to_mp3(generated_musicxml_data)
+        logger.info(f"MusicXMLからMP3への変換が完了しました。ファイルID: {file_id}")
+
+        # 生成されたMP3データをGCSにアップロード
+        gcs_blob_name_mp3 = f"generated_mp3/{file_id}.mp3"
+        await gcs_service.upload_data_to_gcs(
+            data=generated_mp3_data,
+            bucket_name=settings.GCS_TRACK_BUCKET, # MusicXMLと同じバケットを使用
+            destination_blob_name=gcs_blob_name_mp3,
+            content_type="audio/mpeg" # MP3のMIMEタイプ
+        )
+
         # 各ファイルの公開URLを取得
         public_original_audio_url = gcs_service.get_gcs_public_url(settings.GCS_UPLOAD_BUCKET, gcs_blob_name_original)
         public_musicxml_url = gcs_service.get_gcs_public_url(settings.GCS_TRACK_BUCKET, gcs_blob_name_musicxml)
+        public_mp3_url = gcs_service.get_gcs_public_url(settings.GCS_TRACK_BUCKET, gcs_blob_name_mp3)
 
         logger.info(f"ファイル {file_id} の処理に成功しました。レスポンスを返します。")
         # ProcessResponse モデルの analysis フィールドは、humming_theme を持つ新しい AnalysisResult を期待します。
@@ -175,7 +192,8 @@ async def process_audio_file(
         return ProcessResponse(
             analysis=analysis_result_obj,
             backing_track_url=public_musicxml_url,
-            original_file_url=public_original_audio_url
+            original_file_url=public_original_audio_url,
+            generated_mp3_url=public_mp3_url
         )
     finally:
         # Ensure file is closed, even if an error occurs
