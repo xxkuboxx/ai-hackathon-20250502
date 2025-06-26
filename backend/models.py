@@ -43,6 +43,9 @@ class ProcessResponse(BaseModel):
     original_file_url: Optional[HttpUrl] = Field(
         None, description="アップロードされたオリジナル音声ファイルの公開URL"
     )
+    generated_mp3_url: Optional[HttpUrl] = Field(
+        None, description="生成されたMP3ファイルの公開URL"
+    )
 
 
 class ChatMessage(BaseModel):
