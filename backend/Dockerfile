@@ -16,8 +16,15 @@ WORKDIR /app
 ARG UID=10001
 RUN useradd -m -u ${UID} --no-log-init appuser
 
-# システム依存関係をインストール (もしあれば)
-# RUN apt-get update && apt-get install -y --no-install-recommends gcc build-essential && rm -rf /var/lib/apt/lists/*
+# システム依存関係をインストール
+# FFmpegを追加
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends fluidsynth ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+# もしgccやbuild-essentialも必要であれば、以下のように記述します
+# RUN apt-get update && \
+#     apt-get install -y --no-install-recommends gcc build-essential ffmpeg && \
+#     rm -rf /var/lib/apt/lists/*
 
 # requirementsファイルをコンテナの/appにコピー
 COPY requirements.txt .

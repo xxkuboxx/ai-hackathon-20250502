@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' as http_parser;
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:math' as math;
 import 'file_operations_io.dart'
     if (dart.library.html) 'file_operations_web.dart';
 import 'web_audio_recorder.dart'
@@ -77,6 +80,9 @@ class AudioProcessingService {
         'POST',
         Uri.parse('$baseUrl/api/process'),
       );
+      
+      // タイムアウト設定を追加（音声解析処理のため長めに設定）
+      request.headers['Connection'] = 'keep-alive';
 
       // ファイルを添付
       http.MultipartFile file;
@@ -88,21 +94,36 @@ class AudioProcessingService {
           webAudioData,
         );
       } else {
-        // モバイル環境：ファイルパスから作成
-        file = await http.MultipartFile.fromPath('file', filePath);
+        // モバイル環境：ファイルパスから作成（WAV形式固定）
+        file = await http.MultipartFile.fromPath(
+          'file',
+          filePath,
+          contentType: http_parser.MediaType.parse('audio/wav'),
+        );
       }
       request.files.add(file);
 
-      // リクエスト送信
-      var response = await request.send();
+      // リクエスト送信（タイムアウト設定: 3分）
+      var response = await request.send().timeout(
+        const Duration(minutes: 3),
+        onTimeout: () {
+          if (kDebugMode) print('API request timeout after 3 minutes');
+          throw TimeoutException('API request timeout', const Duration(minutes: 3));
+        },
+      );
 
       if (response.statusCode == 200) {
         var responseBody = await response.stream.bytesToString();
+        if (kDebugMode) print('API Response Body: $responseBody');
         var jsonData = json.decode(responseBody);
 
         return AudioAnalysisResult.fromJson(jsonData);
       } else {
-        if (kDebugMode) print('API Error: ${response.statusCode}');
+        var responseBody = await response.stream.bytesToString();
+        if (kDebugMode) {
+          print('API Error: ${response.statusCode}');
+          print('Error Response Body: $responseBody');
+        }
         return null;
       }
     } catch (e) {
@@ -143,6 +164,12 @@ class AudioProcessingService {
           'Accept': 'application/json',
         },
         body: json.encode(requestBody),
+      ).timeout(
+        const Duration(minutes: 2),
+        onTimeout: () {
+          if (kDebugMode) print('Chat API request timeout after 2 minutes');
+          throw TimeoutException('Chat API request timeout', const Duration(minutes: 2));
+        },
       );
 
       if (kDebugMode) {
@@ -198,7 +225,7 @@ class MyHomePage extends StatefulWidget {
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   String? _audioFilePath;
   late final RecorderController? _recorderController;
   late final PlayerController? playerController;
@@ -212,6 +239,14 @@ class _MyHomePageState extends State<MyHomePage> {
   final List<ChatMessageModel> _chatHistory = [];
   final ScrollController _scrollController = ScrollController();
   bool _isLoadingResponse = false;
+  
+  // Animation controllers
+  late AnimationController _loadingAnimationController;
+  late AnimationController _chatLoadingAnimationController;
+
+  // レスポンシブデザインヘルパー
+  bool get _isSmallScreen => MediaQuery.of(context).size.height < 600;
+  double get _responsiveSpacing => _isSmallScreen ? 8.0 : 16.0;
 
   // 状態管理
   bool _isAnalyzed = false;
@@ -232,6 +267,17 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+
+    // Animation controllers initialization
+    _loadingAnimationController = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    )..repeat();
+    
+    _chatLoadingAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    )..repeat();
 
     // プラットフォームに応じた初期化
     if (isWeb) {
@@ -267,10 +313,12 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   void dispose() {
-    super.dispose();
+    _loadingAnimationController.dispose();
+    _chatLoadingAnimationController.dispose();
     _recorderController?.dispose();
     playerController?.dispose();
     _webAudioRecorder?.dispose();
+    super.dispose();
   }
 
   void _sendMessage() async {
@@ -326,9 +374,10 @@ class _MyHomePageState extends State<MyHomePage> {
           e.toString().contains('XMLHttpRequest')) {
         errorMessage =
             "CORS/ネットワークエラー: ブラウザのセキュリティ制限によりAPIに接続できません。サーバー側でCORS設定が必要です。";
-      } else if (e.toString().contains('SocketException') ||
-          e.toString().contains('TimeoutException')) {
+      } else if (e.toString().contains('SocketException')) {
         errorMessage = "ネットワークエラー: APIサーバーに接続できません。インターネット接続を確認してください。";
+      } else if (e.toString().contains('TimeoutException')) {
+        errorMessage = "処理時間が長くなっています。サーバーで音声解析処理中の可能性があります。しばらくお待ちください。";
       } else {
         errorMessage = "予期しないエラーが発生しました: ${e.toString()}";
       }
@@ -445,24 +494,6 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         );
       }
-    } else if (_recordingState == RecordingState.uploading) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.cloud_upload, color: Colors.blue, size: 24),
-            SizedBox(height: 8),
-            Text(
-              '音声解析中...',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: Colors.blue,
-              ),
-            ),
-          ],
-        ),
-      );
     } else {
       return const Center(
         child: Text(
@@ -492,14 +523,14 @@ class _MyHomePageState extends State<MyHomePage> {
           return null;
         }
       } else {
-        // モバイル環境での録音開始
+        // モバイル環境での録音開始（AAC形式）
         final directory = await getApplicationDocumentsDirectory();
         final outputPath =
             '${directory.path}/recorded_audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
         if (kDebugMode) print('録音開始: $outputPath');
 
-        // RecorderControllerで録音開始
+        // RecorderControllerで録音開始（AACエンコーダー）
         await _recorderController!.record(
           androidEncoder: AndroidEncoder.aac,
           androidOutputFormat: AndroidOutputFormat.mpeg4,
@@ -578,10 +609,15 @@ class _MyHomePageState extends State<MyHomePage> {
       });
 
       if (mounted && context.mounted) {
+        String errorMessage = 'アップロードエラーが発生しました';
+        if (e.toString().contains('TimeoutException')) {
+          errorMessage = '音声解析に時間がかかっています。処理を継続中です...';
+        }
+        
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('アップロードエラーが発生しました'),
-            duration: Duration(seconds: 2),
+          SnackBar(
+            content: Text(errorMessage),
+            duration: const Duration(seconds: 3),
           ),
         );
       }
@@ -732,15 +768,6 @@ class _MyHomePageState extends State<MyHomePage> {
           }
         }
 
-        // 音声再生確認メッセージ
-        if (mounted && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('録音データを再生中...'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
       }
     } catch (e) {
       if (kDebugMode) print('Web再生エラー: $e');
@@ -790,14 +817,16 @@ class _MyHomePageState extends State<MyHomePage> {
                       ),
                     ),
                   ),
-                  child: Padding(
+                  child: SingleChildScrollView(
                     padding: const EdgeInsets.all(16.0),
                     child: Column(
                       children: [
                         _buildRecordingSection(),
-                        const SizedBox(height: 16),
+                        if (_recordingState == RecordingState.uploading)
+                          _buildUploadingIndicator(),
+                        SizedBox(height: _responsiveSpacing),
                         _buildAnalysisResults(),
-                        if (_isAnalyzed) const SizedBox(height: 16),
+                        if (_isAnalyzed) SizedBox(height: _responsiveSpacing),
                         _buildBackingTrackPlayer(),
                       ],
                     ),
@@ -853,12 +882,12 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: _responsiveSpacing),
           Row(
             children: [
               Container(
-                width: 50,
-                height: 50,
+                width: math.min(50, MediaQuery.of(context).size.width * 0.12),
+                height: math.min(50, MediaQuery.of(context).size.width * 0.12),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: _recordingState == RecordingState.recording
@@ -889,21 +918,59 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
               ),
               const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _recordingState == RecordingState.recording ? '録音中' : '録音開始',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _recordingState == RecordingState.recording
+                        ? Colors.red
+                        : Colors.grey,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              // 録音データ再生ボタン
+              Container(
+                width: math.min(50, MediaQuery.of(context).size.width * 0.12),
+                height: math.min(50, MediaQuery.of(context).size.width * 0.12),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _isPlaying
+                      ? Colors.orange.shade100
+                      : Colors.green.shade100,
+                  border: Border.all(
+                    color: _isPlaying
+                        ? Colors.orange.shade300
+                        : Colors.green.shade300,
+                    width: 1.5,
+                  ),
+                ),
+                child: IconButton(
+                  icon: Icon(
+                    _isPlaying ? Icons.stop : Icons.play_arrow,
+                    size: 20,
+                    color: _isPlaying ? Colors.orange : Colors.green,
+                  ),
+                  onPressed: _audioFilePath == null
+                      ? null
+                      : _togglePlayback,
+                ),
+              ),
+              const SizedBox(width: 8),
               Text(
-                _recordingState == RecordingState.recording ? '録音中' : '録音開始',
+                _isPlaying ? '再生中' : '再生',
                 style: TextStyle(
                   fontSize: 12,
-                  color: _recordingState == RecordingState.recording
-                      ? Colors.red
-                      : Colors.grey,
+                  color: _isPlaying ? Colors.orange : Colors.grey,
                   fontWeight: FontWeight.w500,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: _responsiveSpacing),
           Container(
-            height: 60,
+            height: math.min(60, MediaQuery.of(context).size.height * 0.08),
             decoration: BoxDecoration(
               color: Colors.grey.shade100,
               borderRadius: BorderRadius.circular(8.0),
@@ -911,7 +978,7 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
             child: _buildWaveformWidget(),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: _responsiveSpacing),
         ],
       ),
     );
@@ -922,37 +989,41 @@ class _MyHomePageState extends State<MyHomePage> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20.0),
+      padding: const EdgeInsets.all(16.0),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12.0),
-        border: Border.all(color: Colors.green.shade300, width: 2.0),
+        border: Border.all(color: Colors.green.shade300, width: 1.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.analytics, color: Colors.green, size: 24),
+              const Icon(Icons.analytics, color: Colors.green, size: 20),
               const SizedBox(width: 8),
               const Text(
                 'AIによる解析結果',
                 style: TextStyle(
-                  fontSize: 18,
+                  fontSize: 16,
                   fontWeight: FontWeight.bold,
                   color: Colors.green,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          _buildAnalysisRow('Key', _analysisResult?.key ?? 'C Major'),
-          _buildAnalysisRow('BPM', _analysisResult?.bpm.toString() ?? '120'),
-          _buildAnalysisRow(
-            'Chords',
-            _analysisResult?.chords ?? 'C | G | Am | F',
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8.0,
+            runSpacing: 4.0,
+            children: [
+              _buildAnalysisChip('Key', _analysisResult?.key ?? 'C Major'),
+              _buildAnalysisChip('BPM', _analysisResult?.bpm.toString() ?? '120'),
+              _buildAnalysisChip(
+                  'Chords', _analysisResult?.chords ?? 'C | G | Am | F'),
+              _buildAnalysisChip('Genre', _analysisResult?.genre ?? 'Rock'),
+            ],
           ),
-          _buildAnalysisRow('Genre by AI', _analysisResult?.genre ?? 'Rock'),
         ],
       ),
     );
@@ -990,7 +1061,7 @@ class _MyHomePageState extends State<MyHomePage> {
           Column(
             children: [
               Container(
-                height: 60,
+                height: math.min(60, MediaQuery.of(context).size.height * 0.08),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(8.0),
@@ -998,29 +1069,29 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
                 child:
                     _audioFilePath != null && !isWeb && playerController != null
-                    ? AudioFileWaveforms(
-                        playerController: playerController!,
-                        size: Size(MediaQuery.of(context).size.width - 80, 60),
-                        playerWaveStyle: const PlayerWaveStyle(
-                          seekLineColor: Colors.orange,
-                          showSeekLine: true,
-                          waveCap: StrokeCap.round,
-                        ),
-                        waveformType: WaveformType.fitWidth,
-                      )
-                    : Center(
-                        child: Text(
-                          _audioFilePath != null
-                              ? (isWeb
-                                    ? '録音データ: ${_audioFilePath!.split('/').last}'
-                                    : '録音完了後に波形が表示されます')
-                              : '録音完了後に波形が表示されます',
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontSize: 12,
+                        ? AudioFileWaveforms(
+                            playerController: playerController!,
+                            size: Size(MediaQuery.of(context).size.width - 80, 60),
+                            playerWaveStyle: const PlayerWaveStyle(
+                              seekLineColor: Colors.orange,
+                              showSeekLine: true,
+                              waveCap: StrokeCap.round,
+                            ),
+                            waveformType: WaveformType.fitWidth,
+                          )
+                        : Center(
+                            child: Text(
+                              _audioFilePath != null
+                                  ? (isWeb
+                                      ? '録音データ: ${_audioFilePath!.split('/').last}'
+                                      : '録音完了後に波形が表示されます')
+                                  : '録音完了後に波形が表示されます',
+                              style: const TextStyle(
+                                color: Colors.grey,
+                                fontSize: 12,
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
               ),
               const SizedBox(height: 16),
               Row(
@@ -1142,14 +1213,9 @@ class _MyHomePageState extends State<MyHomePage> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.purple.shade300,
-                                  ),
-                                ),
+                                width: 32,
+                                height: 32,
+                                child: _buildMiniLoadingAnimation(),
                               ),
                               const SizedBox(width: 8),
                               const Text(
@@ -1299,43 +1365,273 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  Widget _buildAnalysisRow(String label, String value) {
+  Widget _buildAnalysisChip(String label, String value) {
+    return Chip(
+      avatar: CircleAvatar(
+        backgroundColor: Colors.green.shade100,
+        child: Text(
+          label.substring(0, 1),
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Colors.green,
+            fontSize: 12,
+          ),
+        ),
+      ),
+      label: Text(
+        '$label: $value',
+        style: const TextStyle(
+          color: Colors.black87,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      backgroundColor: Colors.green.shade50,
+      shape: StadiumBorder(
+        side: BorderSide(color: Colors.green.shade200, width: 1.0),
+      ),
+    );
+  }
+
+  Widget _buildUploadingIndicator() {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
-      child: Row(
+      padding: const EdgeInsets.symmetric(vertical: 16.0),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           SizedBox(
-            width: 100,
-            child: Text(
-              '- $label:',
-              style: const TextStyle(
-                fontWeight: FontWeight.w500,
-                color: Colors.grey,
-              ),
-            ),
+            width: math.min(80, MediaQuery.of(context).size.width * 0.2),
+            height: math.min(80, MediaQuery.of(context).size.width * 0.2),
+            child: _buildCustomLoadingAnimation(),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12.0,
-              vertical: 4.0,
-            ),
-            decoration: BoxDecoration(
-              color: Colors.green.shade100,
-              borderRadius: BorderRadius.circular(16.0),
-              border: Border.all(color: Colors.green.shade300, width: 1.0),
-            ),
-            child: Text(
-              value,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.green,
-              ),
+          const SizedBox(height: 8),
+          const Text(
+            'AIが解析中です...',
+            style: TextStyle(
+              color: Colors.blue,
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
             ),
           ),
         ],
       ),
     );
   }
+
+  Widget _buildCustomLoadingAnimation() {
+    return AnimatedBuilder(
+      animation: _loadingAnimationController,
+      builder: (context, child) {
+        final value = _loadingAnimationController.value;
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            // Outer pulsing hexagon
+            Transform.rotate(
+              angle: value * 6.28318,
+              child: Container(
+                width: 70,
+                height: 70,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFF00D4FF).withValues(alpha: 0.6),
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00D4FF).withValues(alpha: 0.3),
+                      blurRadius: 8,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            
+            // Middle rotating ring with gradient effect
+            Transform.rotate(
+              angle: -value * 4.71, // 3/4 speed in opposite direction
+              child: Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      const Color(0xFF6366F1),
+                      const Color(0xFF8B5CF6),
+                      const Color(0xFFEC4899),
+                      const Color(0xFF06B6D4),
+                    ],
+                    stops: const [0.0, 0.33, 0.66, 1.0],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    transform: GradientRotation(value * 6.28318),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF8B5CF6).withValues(alpha: 0.4),
+                      blurRadius: 6,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: Container(
+                  margin: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+            
+            // Inner data particles
+            ...List.generate(6, (index) {
+              final particleAngle = (index * 1.047) + (value * 8.377); // π/3 spacing, faster rotation
+              final radius = 15.0 + (3.0 * math.sin(value * 6.28 + index));
+              final particleSize = 3.0 + (1.5 * math.sin(value * 12.56 + index * 2));
+              final opacity = 0.7 + (0.3 * math.sin(value * 10 + index));
+              
+              return Transform.translate(
+                offset: Offset(
+                  radius * math.cos(particleAngle),
+                  radius * math.sin(particleAngle),
+                ),
+                child: Container(
+                  width: particleSize,
+                  height: particleSize,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF00F5FF).withValues(alpha: opacity),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00F5FF).withValues(alpha: 0.6),
+                        blurRadius: 3,
+                        spreadRadius: 0.5,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+            
+            // Central AI core with matrix effect
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    const Color(0xFF00F5FF).withValues(alpha: 0.9),
+                    const Color(0xFF6366F1).withValues(alpha: 0.7),
+                    const Color(0xFF1E293B).withValues(alpha: 0.9),
+                  ],
+                  stops: const [0.0, 0.6, 1.0],
+                ),
+                border: Border.all(
+                  color: const Color(0xFF00D4FF).withValues(alpha: 0.8),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00F5FF).withValues(alpha: 0.5),
+                    blurRadius: 8,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.memory,
+                size: 16,
+                color: Colors.white.withValues(alpha: 0.9 + 0.1 * math.sin(value * 10)),
+              ),
+            ),
+            
+            // Scanning lines effect
+            Positioned.fill(
+              child: ClipOval(
+                child: CustomPaint(
+                  painter: ScanLinesPainter(animationValue: value),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildMiniLoadingAnimation() {
+    return AnimatedBuilder(
+      animation: _chatLoadingAnimationController,
+      builder: (context, child) {
+        final value = _chatLoadingAnimationController.value;
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(3, (index) {
+            final delay = index * 0.33;
+            final adjustedValue = ((value + delay) % 1.0);
+            final opacity = 0.3 + 0.7 * math.sin(adjustedValue * math.pi);
+            final scale = 0.5 + 0.5 * math.sin(adjustedValue * math.pi);
+            final colors = [Colors.purple, Colors.blue, Colors.teal];
+            
+            return Transform.scale(
+              scale: scale,
+              child: Container(
+                width: 6,
+                height: 6,
+                margin: const EdgeInsets.symmetric(horizontal: 2),
+                decoration: BoxDecoration(
+                  color: colors[index].withValues(alpha: opacity),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: colors[index].withValues(alpha: 0.3),
+                      blurRadius: 2,
+                      spreadRadius: 0.5,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
+
+class ScanLinesPainter extends CustomPainter {
+  final double animationValue;
+
+  ScanLinesPainter({required this.animationValue});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFF00F5FF).withValues(alpha: 0.3)
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+
+    // Draw scanning lines
+    for (int i = 0; i < 3; i++) {
+      final angle = (animationValue * 6.28318) + (i * 2.094); // 120° apart
+      final startAngle = angle - 0.52; // 30° sweep
+      final sweepAngle = 1.047; // 60° sweep
+
+      final rect = Rect.fromCircle(center: center, radius: radius);
+      canvas.drawArc(rect, startAngle, sweepAngle, false, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(ScanLinesPainter oldDelegate) =>
+      oldDelegate.animationValue != animationValue;
 }
 
 class ChatMessage {

@@ -80,6 +80,16 @@ class RateLimitExceededException(AppException):
     error_code = ErrorCode.RATE_LIMIT_EXCEEDED
     message = "レート制限を超過しました。後でもう一度お試しください。"
 
+class AudioConversionException(AppException):
+    status_code = 422
+    error_code = ErrorCode.INVALID_REQUEST
+    message = "音声ファイルの変換に失敗しました。"
+
+class AudioSynthesisException(AppException):
+    status_code = 500
+    error_code = ErrorCode.EXTERNAL_SERVICE_ERROR
+    message = "MusicXMLからMP3への音声合成に失敗しました。"
+
 class InternalServerErrorException(AppException):
     status_code = 500
     error_code = ErrorCode.INTERNAL_SERVER_ERROR
