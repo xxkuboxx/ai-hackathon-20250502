@@ -17,3 +17,11 @@ resource "google_artifact_registry_repository" "backend_repo" {
   # もし明示的な依存が必要な場合は、 `depends_on = [google_project_service.artifactregistry_api]` を追加します。
   # (ただし、`google_project_service` は `var.project_id` にしか依存しないため、通常は不要です。)
 }
+
+resource "google_artifact_registry_repository" "frontend_repo" {
+  project       = var.project_id
+  location      = "us-east5"
+  repository_id = "sessionmuse-frontend-repo" # リポジトリID (プロジェクト内で一意)
+  description   = "SessionMUSEフロントエンドアプリケーションのDockerイメージリポジトリ"
+  format        = "DOCKER"
+}
