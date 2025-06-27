@@ -23,6 +23,10 @@ class WebAudioRecorderWeb {
     // スタブ実装
   }
 
+  Future<void> playAudioFromUrl(String url) async {
+    // スタブ実装
+  }
+
   Future<void> stopAudio() async {
     // スタブ実装
   }
@@ -47,6 +51,7 @@ class WebAudioRecorder {
   Future<bool> startRecording() => _impl.startRecording();
   Future<Uint8List?> stopRecording() => _impl.stopRecording();
   Future<void> playAudio(Uint8List audioData) => _impl.playAudio(audioData);
+  Future<void> playAudioFromUrl(String url) => _impl.playAudioFromUrl(url);
   Future<void> stopAudio() => _impl.stopAudio();
   void dispose() => _impl.dispose();
 }

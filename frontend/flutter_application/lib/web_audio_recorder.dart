@@ -20,6 +20,7 @@ class WebAudioRecorder {
   Future<bool> startRecording() => _impl.startRecording();
   Future<Uint8List?> stopRecording() => _impl.stopRecording();
   Future<void> playAudio(Uint8List audioData) => _impl.playAudio(audioData);
+  Future<void> playAudioFromUrl(String url) => _impl.playAudioFromUrl(url);
   Future<void> stopAudio() => _impl.stopAudio();
   void dispose() => _impl.dispose();
 }

@@ -42,7 +42,7 @@ class AudioAnalysisResult {
       bpm: json['bpm'] ?? 120,
       chords: json['chords'] ?? 'Unknown',
       genre: json['genre'] ?? 'Unknown',
-      backingTrackUrl: json['backing_track_url'],
+      backingTrackUrl: json['generated_mp3_url'],
     );
   }
 }
@@ -264,6 +264,14 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   // プレイヤー状態リスナー管理
   bool _playerListenerAdded = false;
 
+  // 解析キャンセル用
+  bool _shouldCancelAnalysis = false;
+
+  // バッキングトラック再生用
+  late final PlayerController? backingTrackController;
+  bool _isBackingTrackPlaying = false;
+  bool _backingTrackListenerAdded = false;
+
   @override
   void initState() {
     super.initState();
@@ -284,6 +292,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       // Web環境
       _recorderController = null;
       playerController = null;
+      backingTrackController = null;
       _webAudioRecorder = WebAudioRecorder();
       // Web録音権限を取得
       _webAudioRecorder!.checkPermission();
@@ -291,6 +300,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       // モバイル環境
       _recorderController = RecorderController();
       playerController = PlayerController();
+      backingTrackController = PlayerController();
       _webAudioRecorder = null;
       // アプリ起動時に録音権限を取得
       _recorderController!.checkPermission();
@@ -317,6 +327,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     _chatLoadingAnimationController.dispose();
     _recorderController?.dispose();
     playerController?.dispose();
+    backingTrackController?.dispose();
     _webAudioRecorder?.dispose();
     super.dispose();
   }
@@ -405,6 +416,30 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _handleRecordingButtonPress() async {
+    if (_recordingState == RecordingState.uploading) {
+      // 解析中の場合はキャンセルして新しい録音を開始
+      setState(() {
+        _shouldCancelAnalysis = true;
+        _recordingState = RecordingState.recording;
+        _isAnalyzed = true;
+      });
+      if (kDebugMode) print('解析をキャンセルして新しい録音を開始します');
+      
+      // 新しい録音を開始
+      final recordingPath = await _setupRecording();
+      if (recordingPath != null) {
+        setState(() {
+          _audioFilePath = recordingPath;
+        });
+      } else {
+        // 録音開始に失敗した場合は待機状態に戻す
+        setState(() {
+          _recordingState = RecordingState.idle;
+        });
+      }
+      return;
+    }
+    
     if (_recordingState == RecordingState.idle) {
       setState(() {
         _recordingState = RecordingState.recording;
@@ -452,11 +487,37 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           if (await fileExists(recordedFilePath)) {
             final fileSize = await getFileSize(recordedFilePath);
             if (kDebugMode) print('録音ファイルサイズ: $fileSize bytes');
+            
           } else {
             if (kDebugMode) print('録音ファイルが存在しません!');
           }
 
-          await _uploadAndAnalyze();
+          // PlayerControllerで波形を準備（解析キャンセル時でも波形表示のため）
+          if (playerController != null) {
+            try {
+              await playerController!.preparePlayer(
+                path: recordedFilePath,
+                shouldExtractWaveform: true,
+              );
+              if (kDebugMode) print('録音停止後の波形準備完了');
+              // 準備完了後にUIを更新
+              setState(() {});
+            } catch (e) {
+              if (kDebugMode) print('録音停止後の波形準備エラー: $e');
+              // エラーが発生してもUIを更新（代替表示のため）
+              setState(() {});
+            }
+          }
+          
+          // 解析がキャンセルされている場合は解析を実行せず、状態のみ更新
+          if (_shouldCancelAnalysis) {
+            if (kDebugMode) print('解析キャンセル済み - 状態のみ更新');
+            setState(() {
+              _recordingState = RecordingState.idle;
+            });
+          } else {
+            await _uploadAndAnalyze();
+          }
         } else {
           if (kDebugMode) print('recordedFilePath is null!');
           setState(() {
@@ -480,6 +541,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             waveCap: StrokeCap.round,
             extendWaveform: true,
             showMiddleLine: false,
+            waveColor: Colors.red,
           ),
         );
       } else {
@@ -491,6 +553,30 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               SizedBox(height: 4),
               Text('録音中...', style: TextStyle(color: Colors.red, fontSize: 12)),
             ],
+          ),
+        );
+      }
+    } else if (_audioFilePath != null && !isWeb) {
+      // 録音完了後はPlayerControllerを使って波形を表示
+      if (playerController != null) {
+        return AudioFileWaveforms(
+          playerController: playerController!,
+          size: Size(MediaQuery.of(context).size.width - 80, 60),
+          playerWaveStyle: const PlayerWaveStyle(
+            seekLineColor: Colors.blue,
+            showSeekLine: false,
+            waveCap: StrokeCap.round,
+            fixedWaveColor: Colors.blue,
+            liveWaveColor: Colors.blue,
+          ),
+          waveformType: WaveformType.fitWidth,
+        );
+      } else {
+        // PlayerControllerが一時的に利用できない場合の代替表示
+        return const Center(
+          child: Text(
+            '録音完了 - 波形準備中...',
+            style: TextStyle(color: Colors.blue, fontSize: 12),
           ),
         );
       }
@@ -552,6 +638,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       return;
     }
 
+    // 解析開始前にキャンセルフラグをリセット
+    _shouldCancelAnalysis = false;
+    
     if (kDebugMode) print('API upload started: $_audioFilePath');
 
     try {
@@ -571,6 +660,12 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       } else {
         // モバイル環境：ファイルパスを使用
         result = await AudioProcessingService.uploadAndProcess(_audioFilePath!);
+      }
+
+      // キャンセルされた場合は処理を中断
+      if (_shouldCancelAnalysis) {
+        if (kDebugMode) print('解析がキャンセルされました');
+        return;
       }
 
       if (result != null) {
@@ -604,6 +699,13 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       }
     } catch (e) {
       if (kDebugMode) print('Upload error: $e');
+      
+      // キャンセルされた場合はエラーメッセージを表示しない
+      if (_shouldCancelAnalysis) {
+        if (kDebugMode) print('解析がキャンセルされました（エラー処理中）');
+        return;
+      }
+      
       setState(() {
         _recordingState = RecordingState.idle;
       });
@@ -785,6 +887,142 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _toggleBackingTrackPlayback() async {
+    final backingTrackUrl = _analysisResult?.backingTrackUrl;
+    if (backingTrackUrl == null || backingTrackUrl.isEmpty) {
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('バッキングトラックが利用できません'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Web環境では直接URLを再生
+    if (isWeb) {
+      await _toggleWebBackingTrackPlayback(backingTrackUrl);
+      return;
+    }
+
+    // モバイル環境でのバッキングトラック再生
+    if (backingTrackController == null) {
+      return;
+    }
+
+    try {
+      if (_isBackingTrackPlaying) {
+        // 停止
+        if (kDebugMode) print('バッキングトラック再生を停止します');
+        await backingTrackController!.stopPlayer();
+        setState(() {
+          _isBackingTrackPlaying = false;
+        });
+        if (kDebugMode) print('バッキングトラック再生が停止されました');
+      } else {
+        // 再生開始
+        if (kDebugMode) print('バッキングトラック再生を開始します: $backingTrackUrl');
+
+        // 既存の再生を完全に停止してリセット
+        try {
+          await backingTrackController!.stopPlayer();
+          if (kDebugMode) print('既存のバッキングトラック再生を停止しました');
+        } catch (e) {
+          if (kDebugMode) print('停止時エラー（無視可能）: $e');
+        }
+
+        // リスナーを一度だけ追加
+        if (!_backingTrackListenerAdded) {
+          backingTrackController!.onPlayerStateChanged.listen((state) {
+            if (kDebugMode) print('バッキングトラックプレイヤー状態変更: ${state.toString()}');
+            if (state.isPaused || state.isStopped) {
+              if (mounted) {
+                setState(() {
+                  _isBackingTrackPlaying = false;
+                });
+                if (kDebugMode) print('バッキングトラック再生状態をfalseに更新しました');
+              }
+            }
+          });
+          _backingTrackListenerAdded = true;
+          if (kDebugMode) print('バッキングトラックプレイヤーリスナーを追加しました');
+        }
+
+        // URL から再生開始
+        await backingTrackController!.preparePlayer(
+          path: backingTrackUrl,
+          shouldExtractWaveform: true,
+        );
+        await backingTrackController!.startPlayer();
+        setState(() {
+          _isBackingTrackPlaying = true;
+        });
+        if (kDebugMode) print('バッキングトラック再生が開始されました');
+      }
+    } catch (e) {
+      if (kDebugMode) print('バッキングトラック再生エラー: $e');
+      setState(() {
+        _isBackingTrackPlaying = false;
+      });
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('バッキングトラック再生エラー: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleWebBackingTrackPlayback(String url) async {
+    if (_webAudioRecorder == null) return;
+
+    try {
+      if (_isBackingTrackPlaying) {
+        // 停止
+        if (kDebugMode) print('Webバッキングトラック再生を停止します');
+        await _webAudioRecorder.stopAudio();
+        setState(() {
+          _isBackingTrackPlaying = false;
+        });
+      } else {
+        // 再生開始
+        if (kDebugMode) print('Webバッキングトラック再生を開始します: $url');
+        setState(() {
+          _isBackingTrackPlaying = true;
+        });
+
+        // 再生完了を監視
+        _webAudioRecorder.playbackStateStream.listen((isPlaying) {
+          if (mounted) {
+            setState(() {
+              _isBackingTrackPlaying = isPlaying;
+            });
+          }
+        });
+
+        // URLから音声を再生（実際のWeb実装では fetch + AudioContext を使用）
+        await _webAudioRecorder.playAudioFromUrl(url);
+      }
+    } catch (e) {
+      if (kDebugMode) print('Webバッキングトラック再生エラー: $e');
+      setState(() {
+        _isBackingTrackPlaying = false;
+      });
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('バッキングトラック再生エラー: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
   void _toggleChat() {
     setState(() {
       _isChatOpen = !_isChatOpen;
@@ -798,8 +1036,125 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     }
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text(widget.title),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.deepPurple.shade600,
+                Colors.indigo.shade500,
+                Colors.blue.shade400,
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.deepPurple.withOpacity(0.3),
+                blurRadius: 15,
+                offset: const Offset(0, 5),
+              ),
+            ],
+          ),
+        ),
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: Icon(
+                Icons.music_note,
+                color: Colors.white,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ShaderMask(
+                  shaderCallback: (bounds) => LinearGradient(
+                    colors: [
+                      Colors.white,
+                      Colors.white.withOpacity(0.8),
+                    ],
+                  ).createShader(bounds),
+                  child: const Text(
+                    'SessionMUSE',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ),
+                Text(
+                  'Your AI Music Partner',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.white.withOpacity(0.9),
+                    fontWeight: FontWeight.w400,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(width: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.greenAccent.withOpacity(0.6),
+                          blurRadius: 4,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'LIVE',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        centerTitle: true,
       ),
       body: Stack(
         children: [
@@ -906,15 +1261,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                         ? Icons.stop
                         : Icons.mic,
                     size: 20,
-                    color: _recordingState == RecordingState.uploading
-                        ? Colors.grey
-                        : (_recordingState == RecordingState.recording
-                              ? Colors.red
-                              : Colors.blue),
+                    color: _recordingState == RecordingState.recording
+                        ? Colors.red
+                        : Colors.blue,
                   ),
-                  onPressed: _recordingState == RecordingState.uploading
-                      ? null
-                      : _handleRecordingButtonPress,
+                  onPressed: _handleRecordingButtonPress,
                 ),
               ),
               const SizedBox(width: 8),
@@ -968,17 +1319,19 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
             ],
           ),
-          SizedBox(height: _responsiveSpacing),
-          Container(
-            height: math.min(60, MediaQuery.of(context).size.height * 0.08),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(8.0),
-              border: Border.all(color: Colors.grey.shade300, width: 1.0),
+          if (!isWeb) ...[
+            SizedBox(height: _responsiveSpacing),
+            Container(
+              height: math.min(60, MediaQuery.of(context).size.height * 0.08),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8.0),
+                border: Border.all(color: Colors.grey.shade300, width: 1.0),
+              ),
+              child: _buildWaveformWidget(),
             ),
-            child: _buildWaveformWidget(),
-          ),
-          SizedBox(height: _responsiveSpacing),
+            SizedBox(height: _responsiveSpacing),
+          ],
         ],
       ),
     );
@@ -1030,7 +1383,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   }
 
   Widget _buildBackingTrackPlayer() {
-    if (!_isAnalyzed) return const SizedBox.shrink();
+    // バッキングトラックカードを常に表示
+    final hasBackingTrack = _analysisResult?.backingTrackUrl != null && _analysisResult!.backingTrackUrl!.isNotEmpty;
 
     return Container(
       width: double.infinity,
@@ -1038,97 +1392,198 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12.0),
-        border: Border.all(color: Colors.orange.shade300, width: 2.0),
+        border: Border.all(
+          color: hasBackingTrack ? Colors.orange.shade300 : Colors.grey.shade300, 
+          width: 2.0
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.headphones, color: Colors.orange, size: 24),
+              Icon(
+                Icons.headphones, 
+                color: hasBackingTrack ? Colors.orange : Colors.grey, 
+                size: 24
+              ),
               const SizedBox(width: 8),
-              const Text(
+              Text(
                 'AIにより自動で生成された伴奏',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: Colors.orange,
+                  color: hasBackingTrack ? Colors.orange : Colors.grey,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: hasBackingTrack ? Colors.orange.shade50 : Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(8.0),
+              border: Border.all(
+                color: hasBackingTrack ? Colors.orange.shade200 : Colors.grey.shade200, 
+                width: 1.0
+              ),
+            ),
+            child: Column(
+              children: [
+                Icon(
+                  hasBackingTrack ? Icons.music_note : Icons.music_off,
+                  color: hasBackingTrack ? Colors.orange.shade600 : Colors.grey.shade400,
+                  size: 32,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  hasBackingTrack 
+                      ? 'AIがあなたの音声から伴奏を生成しました！'
+                      : '音声を録音・解析すると、AIが伴奏を生成します',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: hasBackingTrack ? Colors.orange.shade700 : Colors.grey.shade600,
+                    fontSize: 14,
+                    fontWeight: hasBackingTrack ? FontWeight.w500 : FontWeight.normal,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (!isWeb) ...[
+            const SizedBox(height: 16),
+            Container(
+              height: math.min(60, MediaQuery.of(context).size.height * 0.08),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8.0),
+                border: Border.all(color: Colors.grey.shade300, width: 1.0),
+              ),
+              child: hasBackingTrack && backingTrackController != null
+                  ? AudioFileWaveforms(
+                      playerController: backingTrackController!,
+                      size: Size(MediaQuery.of(context).size.width - 80, 60),
+                      playerWaveStyle: const PlayerWaveStyle(
+                        seekLineColor: Colors.orange,
+                        showSeekLine: true,
+                        waveCap: StrokeCap.round,
+                        fixedWaveColor: Colors.orange,
+                        liveWaveColor: Colors.orange,
+                      ),
+                      waveformType: WaveformType.fitWidth,
+                    )
+                  : const Center(
+                      child: Text(
+                        'バッキングトラックが利用可能になると波形が表示されます',
+                        style: TextStyle(
+                          color: Colors.grey,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 16),
+          ] else if (isWeb && hasBackingTrack) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8.0),
+                border: Border.all(color: Colors.orange.shade200, width: 1.0),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.music_note,
+                    color: Colors.orange.shade600,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'バッキングトラック: ${_analysisResult!.backingTrackUrl!.split('/').last}',
+                      style: TextStyle(
+                        color: Colors.orange.shade700,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           Column(
             children: [
-              Container(
-                height: math.min(60, MediaQuery.of(context).size.height * 0.08),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8.0),
-                  border: Border.all(color: Colors.grey.shade300, width: 1.0),
-                ),
-                child:
-                    _audioFilePath != null && !isWeb && playerController != null
-                        ? AudioFileWaveforms(
-                            playerController: playerController!,
-                            size: Size(MediaQuery.of(context).size.width - 80, 60),
-                            playerWaveStyle: const PlayerWaveStyle(
-                              seekLineColor: Colors.orange,
-                              showSeekLine: true,
-                              waveCap: StrokeCap.round,
-                            ),
-                            waveformType: WaveformType.fitWidth,
-                          )
-                        : Center(
-                            child: Text(
-                              _audioFilePath != null
-                                  ? (isWeb
-                                      ? '録音データ: ${_audioFilePath!.split('/').last}'
-                                      : '録音完了後に波形が表示されます')
-                                  : '録音完了後に波形が表示されます',
-                              style: const TextStyle(
-                                color: Colors.grey,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-              ),
-              const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   IconButton(
-                    onPressed: _audioFilePath != null ? _togglePlayback : null,
+                    onPressed: hasBackingTrack 
+                        ? _toggleBackingTrackPlayback 
+                        : () {
+                            if (mounted && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('音声を録音・解析するとバッキングトラックが利用できます'),
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            }
+                          },
                     icon: Icon(
-                      _isPlaying ? Icons.stop : Icons.play_arrow,
+                      hasBackingTrack && _isBackingTrackPlaying ? Icons.stop : Icons.play_arrow,
                       color: Colors.white,
                     ),
                     style: IconButton.styleFrom(
-                      backgroundColor: _audioFilePath != null
-                          ? (_isPlaying ? Colors.red : Colors.green)
-                          : Colors.grey,
+                      backgroundColor: hasBackingTrack
+                          ? (_isBackingTrackPlaying ? Colors.red : Colors.green)
+                          : Colors.grey.shade400,
                       padding: const EdgeInsets.all(12),
                     ),
                   ),
                   const SizedBox(width: 16),
                   IconButton(
-                    onPressed: _audioFilePath != null
-                        ? () {
+                    onPressed: hasBackingTrack
+                        ? () async {
+                            final url = _analysisResult!.backingTrackUrl!;
                             if (mounted && context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
-                                    '音声ファイルが保存されました: ${_audioFilePath!.split('/').last}',
+                                    'バッキングトラックURL: $url',
                                   ),
                                   duration: const Duration(seconds: 3),
+                                  action: SnackBarAction(
+                                    label: 'コピー',
+                                    onPressed: () {
+                                      // URLをクリップボードにコピーする機能はプラットフォーム依存のため省略
+                                    },
+                                  ),
                                 ),
                               );
                             }
                           }
-                        : null,
-                    icon: const Icon(Icons.download, color: Colors.blue),
+                        : () {
+                            if (mounted && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('バッキングトラックが生成されるとダウンロードできます'),
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            }
+                          },
+                    icon: Icon(
+                      Icons.download, 
+                      color: hasBackingTrack ? Colors.blue : Colors.grey.shade600
+                    ),
                     style: IconButton.styleFrom(
-                      backgroundColor: _audioFilePath != null
+                      backgroundColor: hasBackingTrack
                           ? Colors.blue.shade50
                           : Colors.grey.shade200,
                       padding: const EdgeInsets.all(12),
