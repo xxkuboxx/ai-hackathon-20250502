@@ -1,0 +1,37 @@
+steps:
+  # Dockerイメージをビルド
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--tag=us-east5-docker.pkg.dev/$PROJECT_ID/sessionmuse-frontend-repo/sessionmuse-frontend:latest'
+      - '--cache-from=us-east5-docker.pkg.dev/$PROJECT_ID/sessionmuse-frontend-repo/sessionmuse-frontend:latest'
+      - '.' # Dockerfileがあるディレクトリ (frontend/)
+    id: 'Build Docker image'
+    env:
+      - 'DOCKER_BUILDKIT=1'
+
+  # イメージをArtifact Registryにプッシュ
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-east5-docker.pkg.dev/$PROJECT_ID/sessionmuse-frontend-repo/sessionmuse-frontend:latest']
+    id: 'Push image to Artifact Registry'
+
+  # Cloud Runにデプロイ
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'sessionmuse-frontend' # Cloud Runサービス名
+      - '--image=us-east5-docker.pkg.dev/$PROJECT_ID/sessionmuse-frontend-repo/sessionmuse-frontend:latest'
+      - '--platform=managed'
+      - '--region=us-east5'
+      - '--allow-unauthenticated' # 未認証の呼び出しを許可
+      # 以下はオプションです。必要に応じてコメントを解除し、値を調整してください。
+      - '--min-instances=0'    # 最小インスタンス数
+      - '--max-instances=1'    # 最大インスタンス数 (コスト管理のため、最初は小さく設定することを推奨)
+      - '--memory=512Mi'       # メモリ
+      - '--cpu=1'              # CPU
+      - '--timeout=300'        # リクエストタイムアウト秒
+      - '--concurrency=80'     # 1コンテナあたりの同時リクエスト数
+      # 環境変数を設定する場合
+    id: 'Deploy to Cloud Run'

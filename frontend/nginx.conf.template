@@ -1,0 +1,22 @@
+server {
+    listen       ${PORT};
+    server_name  localhost;
+    # ルートディレクトリの指定
+    root   /usr/share/nginx/html;
+
+    location / {
+        index  index.html index.htm;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 50x系のエラーページ
+    error_page   500 502 503 504  /50x.html;
+    location = /50x.html {
+        root   /usr/share/nginx/html;
+    }
+}
+
+# 全てのイベントログを標準エラー出力に転送
+error_log  /dev/stderr;
+# 全てのアクセスログを標準出力に転送
+access_log /dev/stdout;
