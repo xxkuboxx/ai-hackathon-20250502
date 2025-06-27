@@ -1,45 +1,54 @@
-# Stage 1: Build the Flutter web application
-FROM cirrusci/flutter:latest as builder
+# syntax=docker/dockerfile:1
 
-# Set working directory
+# Stage 1: Build the Flutter web application
+# 信頼できる公式Dartイメージをベースにする
+FROM dart:stable as builder
+
 WORKDIR /app
 
-# Copy the Flutter application files
-COPY ./flutter_application /app
+# gitをインストール（dart:stableイメージには含まれていないため）
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
-# Build the Flutter web application
+# Dart 3.8.1を含むFlutter 3.32.2をタグで正確に指定してクローン
+# --depth 1 は履歴を全て取得せず、最新のスナップショットのみを取得するため、ダウンロードが高速化されます
+RUN git clone https://github.com/flutter/flutter.git --depth 1 --branch 3.32.2 /usr/local/flutter
+ENV PATH="/usr/local/flutter/bin:${PATH}"
+
+# Flutterのセットアップとバージョンの確認
+RUN flutter doctor
+RUN flutter --version
+
+# アプリケーションの依存関係を先にインストールする（推奨）
+# これにより、ソースコードの変更時にも依存関係のレイヤーキャッシュが再利用され、ビルドが高速化します
+COPY ./flutter_application/pubspec.* ./
+RUN flutter pub get
+
+# アプリケーションのソースコードをコピー
+COPY ./flutter_application/ ./
+
+# Flutterウェブアプリケーションをビルド
 RUN flutter build web
 
 # Stage 2: Serve the Flutter web application with Nginx
 FROM nginx:alpine
 
-# Remove default Nginx configuration
+# gettextパッケージをインストール（envsubstコマンドのため）
+RUN apk add --no-cache gettext
+
+# デフォルトのNginx設定を削除
 RUN rm /etc/nginx/conf.d/default.conf
 
-# Create a new Nginx configuration file that uses the PORT environment variable
-COPY <<EOF /etc/nginx/conf.d/app.conf.template
-server {
-    listen       \${PORT};
-    server_name  localhost;
+# Nginxの設定テンプレートをコンテナにコピー
+COPY nginx.conf.template /etc/nginx/conf.d/app.conf.template
 
-    location / {
-        root   /usr/share/nginx/html;
-        index  index.html index.htm;
-        try_files \$uri \$uri/ /index.html;
-    }
-
-    error_page   500 502 503 504  /50x.html;
-    location = /50x.html {
-        root   /usr/share/nginx/html;
-    }
-}
-EOF
-
-# Copy the built Flutter web application from the builder stage
+# ビルダー（Stage 1）からビルドされたWebファイルをコピー
 COPY --from=builder /app/build/web /usr/share/nginx/html
 
-# Expose the port Nginx will listen on (this is for documentation, Cloud Run uses the PORT env var)
+# コピーしたファイルのオーナーをnginxユーザーに変更する
+RUN chown -R nginx:nginx /usr/share/nginx/html
+
+# ポートを公開（ドキュメント目的）
 EXPOSE 8080
 
-# Start Nginx and substitute the PORT environment variable in the Nginx config
-CMD ["/bin/sh",  "-c",  "envsubst '\\\${\\PORT}' < /etc/nginx/conf.d/app.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+# Nginxを起動し、PORT環境変数を設定ファイルに適用する
+CMD ["/bin/sh", "-c", "envsubst '\\$PORT' < /etc/nginx/conf.d/app.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
