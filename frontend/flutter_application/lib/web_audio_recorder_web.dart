@@ -546,6 +546,74 @@ class WebAudioRecorderWeb {
     }
   }
 
+  Future<void> playAudioFromUrl(String url) async {
+    if (_isPlaying) {
+      if (kDebugMode) {
+        print('Already playing audio');
+      }
+      return;
+    }
+
+    try {
+      _isPlaying = true;
+      _playbackStateController.add(true);
+      if (kDebugMode) {
+        print('Web audio playback started - playing from URL: $url');
+      }
+
+      // URLから音声を再生
+      _audioElement = html.AudioElement(url);
+      _audioElement!.volume = 0.7; // 70%の音量
+      _audioElement!.crossOrigin = 'anonymous'; // CORS対応
+
+      // 再生完了を監視
+      _audioElement!.onEnded.listen((_) {
+        _isPlaying = false;
+        _playbackStateController.add(false);
+        _audioElement = null;
+        if (kDebugMode) {
+          print('Web audio playback completed (URL audio)');
+        }
+      });
+
+      // エラーハンドリング
+      _audioElement!.onError.listen((error) {
+        if (kDebugMode) {
+          print('Audio playback error: $error');
+        }
+        _isPlaying = false;
+        _playbackStateController.add(false);
+        _audioElement = null;
+      });
+
+      // 再生開始
+      await _audioElement!.play();
+      if (kDebugMode) {
+        print('Started playing from URL: $url');
+      }
+
+      // フォールバックタイマー（300秒後に強制停止）
+      _playbackTimer = Timer(const Duration(seconds: 300), () {
+        if (_isPlaying && _audioElement != null) {
+          _audioElement!.pause();
+          _audioElement = null;
+          _isPlaying = false;
+          _playbackStateController.add(false);
+          if (kDebugMode) {
+            print('Audio playback timeout (300s)');
+          }
+        }
+      });
+    } catch (e) {
+      if (kDebugMode) {
+        print('Failed to play audio from URL: $e');
+      }
+      _isPlaying = false;
+      _playbackStateController.add(false);
+      _audioElement = null;
+    }
+  }
+
   Future<void> stopAudio() async {
     if (!_isPlaying) {
       if (kDebugMode) {
@@ -560,7 +628,8 @@ class WebAudioRecorderWeb {
 
       if (_audioElement != null) {
         _audioElement!.pause();
-        if (_audioElement!.src.isNotEmpty) {
+        // blob URLの場合のみリボーク
+        if (_audioElement!.src.startsWith('blob:')) {
           html.Url.revokeObjectUrl(_audioElement!.src);
         }
         _audioElement = null;
