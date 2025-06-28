@@ -6,7 +6,7 @@ import os
 from fastapi import APIRouter, UploadFile, File, Depends
 from typing import Annotated, Optional
 
-from models import ProcessResponse, AnalysisResult
+from models import ProcessResponse
 from config import settings
 from exceptions import (
     UnsupportedMediaTypeException,
@@ -139,32 +139,31 @@ async def process_audio_file(
             gcs_file_path=gcs_original_file_uri
         )
 
-        # ワークフローから「トラックの雰囲気/テーマ」を含む解析結果とMusicXMLデータを取得します。
-        # final_analysis_result には humming_theme が格納されている想定です。
-        analysis_result_obj = workflow_final_state.get("final_analysis_result")
-        # generated_musicxml_data に MusicXML 文字列が格納されている想定です。
+        # ワークフローから「トラックの雰囲気/テーマ」、MusicXMLデータ、音楽的特徴を取得します。
+        humming_theme = workflow_final_state.get("humming_theme")
         generated_musicxml_data = workflow_final_state.get("generated_musicxml_data")
+        music_analysis_features = workflow_final_state.get("music_analysis_features")
 
-        # 必須データの存在確認 (ワークフロー内で例外が発生しなかった場合の最終防衛線)
-        if not analysis_result_obj:
-            logger.error("AIワークフローから最終解析結果（トラック雰囲気/テーマ）が欠落しています。これは予期せぬ状態です。")
-            raise AnalysisFailedException(detail="AIワークフローから最終解析結果（トラック雰囲気/テーマ）が欠落しています。")
+        # 必須データの存在確認
+        if not humming_theme:
+            logger.error("AIワークフローからトラックの雰囲気/テーマが欠落しています。")
+            raise AnalysisFailedException(detail="AIワークフローからトラックの雰囲気/テーマが欠落しています。")
 
         if not generated_musicxml_data:
-            logger.error("AIワークフローから生成されたMusicXMLデータが欠落しています。これは予期せぬ状態です。")
+            logger.error("AIワークフローから生成されたMusicXMLデータが欠落しています。")
             raise GenerationFailedException(detail="AIワークフローから生成されたMusicXMLデータが欠落しています。")
 
-        if not isinstance(generated_musicxml_data, str):
-            logger.error(f"AIワークフローからMusicXMLデータとして予期しないデータ型が返されました: {type(generated_musicxml_data)}。文字列を期待していました。")
-            raise GenerationFailedException(detail="AIワークフローはMusicXMLデータを期待される型で返しませんでした。")
+        # music_analysis_features はオプションなので、存在しなくてもエラーにはしない
+        if not music_analysis_features:
+            logger.warning("MusicXMLの音楽的特徴は解析されませんでした。レスポンスには含まれません。")
 
         # MusicXMLデータをGCSにアップロード
         gcs_blob_name_musicxml = f"generated_musicxml/{file_id}.musicxml"
         await gcs_service.upload_data_to_gcs(
             data=generated_musicxml_data,
-            bucket_name=settings.GCS_TRACK_BUCKET, # MusicXML用のバケット (既存のものを流用または新規)
+            bucket_name=settings.GCS_TRACK_BUCKET,
             destination_blob_name=gcs_blob_name_musicxml,
-            content_type="application/vnd.recordare.musicxml+xml" # MusicXMLのMIMEタイプ
+            content_type="application/vnd.recordare.musicxml+xml"
         )
 
         # MusicXMLからMP3への変換
@@ -176,9 +175,9 @@ async def process_audio_file(
         gcs_blob_name_mp3 = f"generated_mp3/{file_id}.mp3"
         await gcs_service.upload_data_to_gcs(
             data=generated_mp3_data,
-            bucket_name=settings.GCS_TRACK_BUCKET, # MusicXMLと同じバケットを使用
+            bucket_name=settings.GCS_TRACK_BUCKET,
             destination_blob_name=gcs_blob_name_mp3,
-            content_type="audio/mpeg" # MP3のMIMEタイプ
+            content_type="audio/mpeg"
         )
 
         # 各ファイルの公開URLを取得
@@ -187,10 +186,9 @@ async def process_audio_file(
         public_mp3_url = gcs_service.get_gcs_public_url(settings.GCS_TRACK_BUCKET, gcs_blob_name_mp3)
 
         logger.info(f"ファイル {file_id} の処理に成功しました。レスポンスを返します。")
-        # ProcessResponse モデルの analysis フィールドは、humming_theme を持つ新しい AnalysisResult を期待します。
-        # backing_track_url にはMusicXMLの公開URLを設定します。
         return ProcessResponse(
-            analysis=analysis_result_obj,
+            humming_theme=humming_theme,
+            analysis=music_analysis_features, # 解析結果（存在しない場合はNone）
             backing_track_url=public_musicxml_url,
             original_file_url=public_original_audio_url,
             generated_mp3_url=public_mp3_url

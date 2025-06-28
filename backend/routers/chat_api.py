@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request, Body, Depends
 from fastapi.responses import StreamingResponse
 from typing import Optional # Optional をインポート
 
-from models import ChatRequest, ChatMessage, ErrorCode, AnalysisResult
+from models import ChatRequest, ChatMessage, ErrorCode
 from exceptions import VertexAIAPIErrorException, InternalServerErrorException # Changed
 from services.vertex_chat_service import VertexChatService, get_vertex_chat_service
 from services.gcs_service import GCSService, get_gcs_service # GCSService をインポート
@@ -50,7 +50,7 @@ async def handle_chat_request(
         # Vertex AIチャットメッセージの構築
         vertex_messages = chat_service.build_vertex_chat_messages(
             system_prompt=prompts.SESSIONMUSE_CHAT_SYSTEM_PROMPT,
-            analysis_context=chat_request.analysis_context,
+            humming_theme=chat_request.humming_theme, # analysis_contextからhumming_themeに変更
             chat_history=chat_request.messages,
             musicxml_content=musicxml_content_for_vertex # ダウンロードした内容またはNoneを渡す
         )
