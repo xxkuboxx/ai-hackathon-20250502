@@ -675,7 +675,20 @@ case "$1" in
         # Clean up temporary file on device
         adb shell rm -f /sdcard/launch.png
         
-        echo "✅ App launched. Screenshot saved to $SCREENSHOT_DIR/launch.png"
+        # Convert PNG to JPEG for smaller file size
+        if command -v sips >/dev/null 2>&1; then
+            echo "🔄 Converting to JPEG..."
+            sips -s format jpeg -s formatOptions 85 $SCREENSHOT_DIR/launch.png --out $SCREENSHOT_DIR/launch.jpg >/dev/null 2>&1
+            if [ $? -eq 0 ]; then
+                # Remove PNG file after successful conversion
+                rm -f $SCREENSHOT_DIR/launch.png
+                echo "✅ App launched. Screenshot saved to $SCREENSHOT_DIR/launch.jpg"
+            else
+                echo "✅ App launched. Screenshot saved to $SCREENSHOT_DIR/launch.png (JPEG conversion failed)"
+            fi
+        else
+            echo "✅ App launched. Screenshot saved to $SCREENSHOT_DIR/launch.png"
+        fi
         ;;
     "record")
         echo "🎥 Starting screen recording..."
@@ -877,7 +890,20 @@ case "$1" in
         # Clean up temporary file on device
         adb shell rm -f /sdcard/debug_$timestamp.png
         
-        echo "✅ Screenshot saved to $SCREENSHOT_DIR/debug_$timestamp.png"
+        # Convert PNG to JPEG for smaller file size
+        if command -v sips >/dev/null 2>&1; then
+            echo "🔄 Converting to JPEG..."
+            sips -s format jpeg -s formatOptions 85 $SCREENSHOT_DIR/debug_$timestamp.png --out $SCREENSHOT_DIR/debug_$timestamp.jpg >/dev/null 2>&1
+            if [ $? -eq 0 ]; then
+                # Remove PNG file after successful conversion
+                rm -f $SCREENSHOT_DIR/debug_$timestamp.png
+                echo "✅ Screenshot saved to $SCREENSHOT_DIR/debug_$timestamp.jpg"
+            else
+                echo "✅ Screenshot saved to $SCREENSHOT_DIR/debug_$timestamp.png (JPEG conversion failed)"
+            fi
+        else
+            echo "✅ Screenshot saved to $SCREENSHOT_DIR/debug_$timestamp.png"
+        fi
         ;;
     "permissions")
         echo "🔐 Granting app permissions..."

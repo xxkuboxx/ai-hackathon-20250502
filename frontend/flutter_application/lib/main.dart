@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:math' as math;
+import 'package:google_fonts/google_fonts.dart';
 import 'file_operations_io.dart'
     if (dart.library.html) 'file_operations_web.dart';
 import 'web_audio_recorder.dart'
@@ -212,6 +213,7 @@ class MyApp extends StatelessWidget {
       title: 'SessionMUSE - Your AI Music Partner',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+        textTheme: GoogleFonts.notoSansJpTextTheme(),
       ),
       home: const MyHomePage(title: 'SessionMUSE - Your AI Music Partner'),
     );
@@ -243,10 +245,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   // Animation controllers
   late AnimationController _loadingAnimationController;
   late AnimationController _chatLoadingAnimationController;
+  late AnimationController _progressAnimationController;
 
-  // レスポンシブデザインヘルパー
-  bool get _isSmallScreen => MediaQuery.of(context).size.height < 600;
-  double get _responsiveSpacing => _isSmallScreen ? 8.0 : 16.0;
 
   // 状態管理
   bool _isAnalyzed = false;
@@ -287,6 +287,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       vsync: this,
     )..repeat();
 
+    _progressAnimationController = AnimationController(
+      duration: const Duration(minutes: 1), // 1分で100%に達する
+      vsync: this,
+    );
+
     // プラットフォームに応じた初期化
     if (isWeb) {
       // Web環境
@@ -325,6 +330,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   void dispose() {
     _loadingAnimationController.dispose();
     _chatLoadingAnimationController.dispose();
+    _progressAnimationController.dispose();
     _recorderController?.dispose();
     playerController?.dispose();
     backingTrackController?.dispose();
@@ -455,6 +461,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       setState(() {
         _recordingState = RecordingState.uploading;
       });
+      // プログレスアニメーションを開始
+      _progressAnimationController.reset();
+      _progressAnimationController.forward();
       if (kDebugMode) print('録音停止中...');
 
       if (isWeb) {
@@ -674,6 +683,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           _recordingState = RecordingState.idle;
           _isAnalyzed = true;
         });
+        // プログレスアニメーションを停止
+        _progressAnimationController.stop();
 
         if (mounted && context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1051,7 +1062,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.deepPurple.withOpacity(0.3),
+                color: Colors.deepPurple.withValues(alpha: 0.3),
                 blurRadius: 15,
                 offset: const Offset(0, 5),
               ),
@@ -1064,10 +1075,10 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
+                color: Colors.white.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: Colors.white.withOpacity(0.3),
+                  color: Colors.white.withValues(alpha: 0.3),
                   width: 1,
                 ),
               ),
@@ -1086,7 +1097,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   shaderCallback: (bounds) => LinearGradient(
                     colors: [
                       Colors.white,
-                      Colors.white.withOpacity(0.8),
+                      Colors.white.withValues(alpha: 0.8),
                     ],
                   ).createShader(bounds),
                   child: const Text(
@@ -1103,7 +1114,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   'Your AI Music Partner',
                   style: TextStyle(
                     fontSize: 11,
-                    color: Colors.white.withOpacity(0.9),
+                    color: Colors.white.withValues(alpha: 0.9),
                     fontWeight: FontWeight.w400,
                     letterSpacing: 0.5,
                   ),
@@ -1114,10 +1125,10 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
+                color: Colors.white.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: Colors.white.withOpacity(0.3),
+                  color: Colors.white.withValues(alpha: 0.3),
                   width: 1,
                 ),
               ),
@@ -1132,7 +1143,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.greenAccent.withOpacity(0.6),
+                          color: Colors.greenAccent.withValues(alpha: 0.6),
                           blurRadius: 4,
                           spreadRadius: 1,
                         ),
@@ -1164,26 +1175,41 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 flex: 1,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    border: Border(
-                      bottom: BorderSide(
-                        color: Colors.grey.shade300,
-                        width: 2.0,
-                      ),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.grey.shade50,
+                        Colors.grey.shade100,
+                      ],
                     ),
                   ),
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      children: [
-                        _buildRecordingSection(),
-                        if (_recordingState == RecordingState.uploading)
-                          _buildUploadingIndicator(),
-                        SizedBox(height: _responsiveSpacing),
-                        _buildAnalysisResults(),
-                        if (_isAnalyzed) SizedBox(height: _responsiveSpacing),
-                        _buildBackingTrackPlayer(),
-                      ],
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: isWeb ? 800 : double.infinity, // Web版は最大幅800px
+                      ),
+                      child: SingleChildScrollView(
+                        padding: EdgeInsets.only(
+                          left: isWeb ? 24.0 : 14.0,
+                          right: isWeb ? 24.0 : 14.0,
+                          top: 16.0,
+                          bottom: 120.0, // フローティングボタンの分の余白を追加
+                        ),
+                        child: Column(
+                          children: [
+                            _buildExplanationSection(),
+                            const SizedBox(height: 16),
+                            _buildRecordingSection(),
+                            if (_recordingState == RecordingState.uploading || _recordingState == RecordingState.idle || _recordingState == RecordingState.recording)
+                              _buildUploadingIndicator(),
+                            const SizedBox(height: 16),
+                            _buildAnalysisResults(),
+                            if (_isAnalyzed) const SizedBox(height: 16),
+                            _buildBackingTrackPlayer(),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1196,15 +1222,136 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       ),
       floatingActionButton: _isChatOpen
           ? null
-          : FloatingActionButton.extended(
-              onPressed: _toggleChat,
-              backgroundColor: Colors.purple,
-              icon: const Icon(Icons.chat_bubble, color: Colors.white),
-              label: const Text(
-                'AIと相談',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
+          : Container(
+              margin: const EdgeInsets.only(bottom: 16, right: 8),
+              child: Material(
+                elevation: 12,
+                borderRadius: BorderRadius.circular(30),
+                shadowColor: Colors.purple.withValues(alpha: 0.3),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.white,
+                        Colors.purple.shade50,
+                        Colors.white,
+                      ],
+                      stops: const [0.0, 0.5, 1.0],
+                    ),
+                    borderRadius: BorderRadius.circular(30),
+                    border: Border.all(
+                      color: Colors.purple.shade200,
+                      width: 2.5,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.purple.withValues(alpha: 0.15),
+                        blurRadius: 20,
+                        offset: const Offset(0, 6),
+                        spreadRadius: 2,
+                      ),
+                      BoxShadow(
+                        color: Colors.purple.withValues(alpha: 0.1),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                        spreadRadius: 0,
+                      ),
+                    ],
+                  ),
+                  child: InkWell(
+                    onTap: _toggleChat,
+                    borderRadius: BorderRadius.circular(30),
+                    splashColor: Colors.purple.withValues(alpha: 0.2),
+                    highlightColor: Colors.purple.withValues(alpha: 0.1),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                Colors.orange.shade300,
+                                Colors.pink.shade400,
+                                Colors.purple.shade500,
+                              ],
+                            ),
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.purple.withValues(alpha: 0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // 背景の音符
+                              Positioned(
+                                top: 6,
+                                right: 8,
+                                child: Icon(
+                                  Icons.music_note,
+                                  color: Colors.white.withValues(alpha: 0.4),
+                                  size: 12,
+                                ),
+                              ),
+                              // メインアイコン（ハートと音楽の組み合わせ）
+                              Icon(
+                                Icons.favorite_rounded,
+                                color: Colors.white,
+                                size: 16,
+                              ),
+                              // 小さな星
+                              Positioned(
+                                bottom: 4,
+                                left: 6,
+                                child: Icon(
+                                  Icons.auto_awesome,
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                  size: 8,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '行き詰まったら・気分転換',
+                              style: TextStyle(
+                                color: Colors.purple.shade700,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'AIバンドメンバーに相談してみよう',
+                              style: TextStyle(
+                                color: Colors.purple.shade600,
+                                fontWeight: FontWeight.w400,
+                                fontSize: 11,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -1212,115 +1359,574 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildRecordingSection() {
+  Widget _buildExplanationSection() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20.0),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8.0),
-        border: Border.all(color: Colors.blue.shade300, width: 1.0),
+        gradient: LinearGradient(
+          colors: [Colors.purple.shade50, Colors.blue.shade50],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.purple.shade200, width: 1),
       ),
       child: Column(
         children: [
-          Row(
-            children: [
-              const Icon(Icons.music_note, color: Colors.blue, size: 18),
-              const SizedBox(width: 8),
-              const Text(
-                '録音',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.blue,
-                ),
-              ),
-            ],
+          // 1. ATTENTION: キャッチコピー
+          Text(
+            '🎵 もう、曲作りで孤独じゃない',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.purple.shade700,
+            ),
           ),
-          SizedBox(height: _responsiveSpacing),
-          Row(
-            children: [
-              Container(
-                width: math.min(50, MediaQuery.of(context).size.width * 0.12),
-                height: math.min(50, MediaQuery.of(context).size.width * 0.12),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _recordingState == RecordingState.recording
-                      ? Colors.red.shade100
-                      : Colors.blue.shade100,
-                  border: Border.all(
-                    color: _recordingState == RecordingState.recording
-                        ? Colors.red.shade300
-                        : Colors.blue.shade300,
-                    width: 1.5,
+          const SizedBox(height: 4),
+          Text(
+            '24時間いつでも付き合ってくれるAIバンドメンバー',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.purple.shade600,
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          // 2. INTEREST: 問題提起と利用シーン（図解）
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.amber.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.amber.shade200),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  '💡 こんな課題を解決',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.amber.shade700,
                   ),
                 ),
-                child: IconButton(
-                  icon: Icon(
-                    _recordingState == RecordingState.recording
-                        ? Icons.stop
-                        : Icons.mic,
-                    size: 20,
-                    color: _recordingState == RecordingState.recording
-                        ? Colors.red
-                        : Colors.blue,
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    _buildProblemStep('💭', 'アイデアが\n浮かんだ', Colors.orange),
+                    _buildProblemArrow(),
+                    _buildProblemStep('😕', '一人だと\n行き詰まり', Colors.red),
+                    _buildProblemArrow(),
+                    _buildProblemStep('🤔', '客観的意見\nが欲しい', Colors.blue),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                // シンプルな要因説明
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.shade200, width: 1),
                   ),
-                  onPressed: _handleRecordingButtonPress,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        color: Colors.red.shade600,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '原因：孤独な作業・客観視できない・新アイデアが浮かばない',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.red.shade700,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          
+          // 3. DESIRE: ソリューション（使い方の流れ）
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.purple.shade100),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  '✨ 簡単3ステップでAIとセッション',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.purple.shade700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    _buildFlowStep('🎤', '① 鼻歌を\n録音', Colors.blue),
+                    _buildArrow(),
+                    _buildFlowStep('🤖', '② AI解析\n実行', Colors.green),
+                    _buildArrow(),
+                    _buildFlowStep('🎵', '③ 一緒に\n演奏', Colors.orange),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.purple.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.purple.shade200, width: 1),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.chat_bubble_outline,
+                        color: Colors.purple.shade600,
+                        size: 14,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '💬 + 「もっとドラマチックに」など感性もAIに相談可能',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.purple.shade700,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          
+          // 5. BENEFIT: 得られる価値
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.green.shade200),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  '🌟 得られるもの',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green.shade700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.star_outline,
+                      color: Colors.green.shade700,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '🎯 鼻歌から、AIと一緒に作り上げる、世界で唯一無二の作品',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.green.shade700,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFlowStep(String icon, String text, Color color) {
+    return Expanded(
+      child: Column(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.2),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(icon, style: const TextStyle(fontSize: 20)),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildArrow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Icon(
+        Icons.arrow_forward,
+        color: Colors.grey.shade400,
+        size: 16,
+      ),
+    );
+  }
+
+  Widget _buildProblemStep(String icon, String text, Color color) {
+    return Expanded(
+      child: Column(
+        children: [
+          Container(
+            width: 35,
+            height: 35,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+              border: Border.all(color: color.withValues(alpha: 0.3), width: 1),
+            ),
+            child: Center(
+              child: Text(icon, style: const TextStyle(fontSize: 16)),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+              color: Colors.amber.shade700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProblemArrow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Icon(
+        Icons.arrow_forward,
+        color: Colors.amber.shade400,
+        size: 14,
+      ),
+    );
+  }
+
+  Widget _buildRecordingSection() {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.cyan.shade50,
+            Colors.blue.shade50,
+            Colors.indigo.shade50,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(24.0),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.cyan.withValues(alpha: 0.15),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+            spreadRadius: 0,
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+            spreadRadius: -2,
+          ),
+        ],
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.8),
+          width: 1.5,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24.0),
+        child: Container(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            children: [
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.cyan.shade600,
+                        Colors.blue.shade600,
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.cyan.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.mic_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Text(
+                        '鼻歌を録音',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
+              const SizedBox(height: 20),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.white,
+                      Colors.cyan.shade50,
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.cyan.shade200, width: 1),
+                ),
                 child: Text(
-                  _recordingState == RecordingState.recording ? '録音中' : '録音開始',
+                  '🎶 あなたのアイデアを聞かせてください。一緒に楽曲を作りましょう！',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 12,
-                    color: _recordingState == RecordingState.recording
-                        ? Colors.red
-                        : Colors.grey,
+                    color: Colors.cyan.shade700,
+                    fontSize: 14,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
-              // 録音データ再生ボタン
-              Container(
-                width: math.min(50, MediaQuery.of(context).size.width * 0.12),
-                height: math.min(50, MediaQuery.of(context).size.width * 0.12),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _isPlaying
-                      ? Colors.orange.shade100
-                      : Colors.green.shade100,
-                  border: Border.all(
-                    color: _isPlaying
-                        ? Colors.orange.shade300
-                        : Colors.green.shade300,
-                    width: 1.5,
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              // 録音ボタンカード
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: _recordingState == RecordingState.recording
+                          ? [Colors.red.shade100, Colors.red.shade200]
+                          : [Colors.white, Colors.cyan.shade50],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: _recordingState == RecordingState.recording
+                          ? Colors.red.shade300
+                          : Colors.cyan.shade200,
+                      width: 1,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (_recordingState == RecordingState.recording ? Colors.red : Colors.cyan).withValues(alpha: 0.2),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
-                ),
-                child: IconButton(
-                  icon: Icon(
-                    _isPlaying ? Icons.stop : Icons.play_arrow,
-                    size: 20,
-                    color: _isPlaying ? Colors.orange : Colors.green,
+                  child: InkWell(
+                    onTap: _handleRecordingButtonPress,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: _recordingState == RecordingState.recording
+                                  ? [Colors.red.shade500, Colors.red.shade700]
+                                  : [Colors.cyan.shade500, Colors.cyan.shade700],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: (_recordingState == RecordingState.recording ? Colors.red : Colors.blue).withValues(alpha: 0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Icon(
+                            _recordingState == RecordingState.recording
+                                ? Icons.stop_rounded
+                                : Icons.mic_rounded,
+                            size: 24,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _recordingState == RecordingState.recording ? '録音中...' : '🎤 アイデア録音',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: _recordingState == RecordingState.recording
+                                ? Colors.red.shade700
+                                : Colors.cyan.shade700,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  onPressed: _audioFilePath == null
-                      ? null
-                      : _togglePlayback,
                 ),
               ),
-              const SizedBox(width: 8),
-              Text(
-                _isPlaying ? '再生中' : '再生',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: _isPlaying ? Colors.orange : Colors.grey,
-                  fontWeight: FontWeight.w500,
+              const SizedBox(width: 12),
+              // 再生ボタンカード
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: _isPlaying
+                          ? [Colors.orange.shade100, Colors.orange.shade200]
+                          : _audioFilePath != null
+                              ? [Colors.white, Colors.green.shade50]
+                              : [Colors.white, Colors.grey.shade100],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: _isPlaying
+                          ? Colors.orange.shade300
+                          : _audioFilePath != null
+                              ? Colors.green.shade200
+                              : Colors.grey.shade300,
+                      width: 1,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (_isPlaying ? Colors.orange : _audioFilePath != null ? Colors.green : Colors.grey).withValues(alpha: 0.2),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: InkWell(
+                    onTap: _audioFilePath == null ? null : _togglePlayback,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: _isPlaying
+                                  ? [Colors.orange.shade500, Colors.orange.shade700]
+                                  : _audioFilePath != null
+                                      ? [Colors.green.shade500, Colors.green.shade700]
+                                      : [Colors.grey.shade400, Colors.grey.shade500],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: (_isPlaying ? Colors.orange : _audioFilePath != null ? Colors.green : Colors.grey).withValues(alpha: 0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Icon(
+                            _isPlaying ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                            size: 24,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _isPlaying ? '🎵 再生中' : _audioFilePath != null ? '🎧 アイデア再生' : '🎧 録音待ち',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: _isPlaying
+                                ? Colors.orange.shade700
+                                : _audioFilePath != null
+                                    ? Colors.green.shade700
+                                    : Colors.grey.shade600,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
           if (!isWeb) ...[
-            SizedBox(height: _responsiveSpacing),
+            const SizedBox(height: 16),
             Container(
               height: math.min(60, MediaQuery.of(context).size.height * 0.08),
               decoration: BoxDecoration(
@@ -1330,54 +1936,125 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
               child: _buildWaveformWidget(),
             ),
-            SizedBox(height: _responsiveSpacing),
+            const SizedBox(height: 16),
           ],
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }
 
   Widget _buildAnalysisResults() {
-    if (!_isAnalyzed) return const SizedBox.shrink();
+    // 常にカードを表示 - 解析中はローディング状態を表示
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16.0),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12.0),
-        border: Border.all(color: Colors.green.shade300, width: 1.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.analytics, color: Colors.green, size: 20),
-              const SizedBox(width: 8),
-              const Text(
-                'AIによる解析結果',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green,
-                ),
-              ),
-            ],
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.deepPurple.shade50,
+            Colors.indigo.shade50,
+            Colors.blue.shade50,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(24.0),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.deepPurple.withValues(alpha: 0.15),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+            spreadRadius: 0,
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8.0,
-            runSpacing: 4.0,
-            children: [
-              _buildAnalysisChip('Key', _analysisResult?.key ?? 'C Major'),
-              _buildAnalysisChip('BPM', _analysisResult?.bpm.toString() ?? '120'),
-              _buildAnalysisChip(
-                  'Chords', _analysisResult?.chords ?? 'C | G | Am | F'),
-              _buildAnalysisChip('Genre', _analysisResult?.genre ?? 'Rock'),
-            ],
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+            spreadRadius: -2,
           ),
         ],
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.8),
+          width: 1.5,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24.0),
+        child: Container(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.deepPurple.shade600,
+                        Colors.indigo.shade600,
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.deepPurple.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.auto_awesome,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Text(
+                        'AI解析結果',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              _isAnalyzed 
+                ? GridView.count(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: isWeb ? 3.0 : 1.8, // Web版はより横長に（高さはコンテンツに依存）
+                      children: [
+                        _buildAnalysisChip('Key', _analysisResult?.key ?? 'C Major', Icons.music_note),
+                        _buildAnalysisChip('BPM', _analysisResult?.bpm.toString() ?? '120', Icons.speed),
+                        _buildAnalysisChip('Chords', _analysisResult?.chords ?? 'C-G-Am', Icons.piano),
+                        _buildAnalysisChip('Genre', _analysisResult?.genre ?? 'Rock', Icons.library_music),
+                      ],
+                    )
+                : _buildAnalysisLoadingState(),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1388,48 +2065,124 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20.0),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12.0),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: hasBackingTrack
+              ? [
+                  Colors.orange.shade50,
+                  Colors.amber.shade50,
+                  Colors.yellow.shade50,
+                ]
+              : [
+                  Colors.grey.shade50,
+                  Colors.blueGrey.shade50,
+                  Colors.grey.shade100,
+                ],
+        ),
+        borderRadius: BorderRadius.circular(24.0),
+        boxShadow: [
+          BoxShadow(
+            color: (hasBackingTrack ? Colors.orange : Colors.grey).withValues(alpha: 0.15),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+            spreadRadius: 0,
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+            spreadRadius: -2,
+          ),
+        ],
         border: Border.all(
-          color: hasBackingTrack ? Colors.orange.shade300 : Colors.grey.shade300, 
-          width: 2.0
+          color: Colors.white.withValues(alpha: 0.8),
+          width: 1.5,
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24.0),
+        child: Container(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                Icons.headphones, 
-                color: hasBackingTrack ? Colors.orange : Colors.grey, 
-                size: 24
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'AIにより自動で生成された伴奏',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: hasBackingTrack ? Colors.orange : Colors.grey,
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: hasBackingTrack
+                          ? [
+                              Colors.orange.shade600,
+                              Colors.amber.shade600,
+                            ]
+                          : [
+                              Colors.grey.shade500,
+                              Colors.blueGrey.shade500,
+                            ],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (hasBackingTrack ? Colors.orange : Colors.grey).withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          hasBackingTrack ? Icons.piano : Icons.piano_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Text(
+                        '一緒に演奏',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16.0),
-            decoration: BoxDecoration(
-              color: hasBackingTrack ? Colors.orange.shade50 : Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(8.0),
-              border: Border.all(
-                color: hasBackingTrack ? Colors.orange.shade200 : Colors.grey.shade200, 
-                width: 1.0
-              ),
-            ),
+              const SizedBox(height: 20),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16.0),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: hasBackingTrack
+                        ? [
+                            Colors.white,
+                            Colors.orange.shade50,
+                          ]
+                        : [
+                            Colors.white,
+                            Colors.grey.shade50,
+                          ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: hasBackingTrack ? Colors.orange.shade200 : Colors.grey.shade200,
+                    width: 1,
+                  ),
+                ),
             child: Column(
               children: [
                 Icon(
@@ -1437,15 +2190,15 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   color: hasBackingTrack ? Colors.orange.shade600 : Colors.grey.shade400,
                   size: 32,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Text(
                   hasBackingTrack 
-                      ? 'AIがあなたの音声から伴奏を生成しました！'
-                      : '音声を録音・解析すると、AIが伴奏を生成します',
+                      ? '🎤 素敵なメロディですね！伴奏を付けました'
+                      : '録音・解析後、AIが伴奏を自動生成します',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: hasBackingTrack ? Colors.orange.shade700 : Colors.grey.shade600,
-                    fontSize: 14,
+                    fontSize: 15,
                     fontWeight: hasBackingTrack ? FontWeight.w500 : FontWeight.normal,
                   ),
                 ),
@@ -1515,85 +2268,209 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 ],
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
           ],
-          Column(
-            children: [
+              const SizedBox(height: 20),
               Row(
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  IconButton(
-                    onPressed: hasBackingTrack 
-                        ? _toggleBackingTrackPlayback 
-                        : () {
-                            if (mounted && context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('音声を録音・解析するとバッキングトラックが利用できます'),
-                                  duration: Duration(seconds: 2),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: hasBackingTrack
+                              ? (_isBackingTrackPlaying 
+                                  ? [Colors.red.shade100, Colors.red.shade200]
+                                  : [Colors.white, Colors.green.shade50])
+                              : [Colors.white, Colors.grey.shade100],
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: hasBackingTrack
+                              ? (_isBackingTrackPlaying ? Colors.red.shade300 : Colors.green.shade200)
+                              : Colors.grey.shade300,
+                          width: 1,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: hasBackingTrack
+                                ? (_isBackingTrackPlaying ? Colors.red : Colors.green).withValues(alpha: 0.2)
+                                : Colors.grey.withValues(alpha: 0.2),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: InkWell(
+                        onTap: hasBackingTrack 
+                            ? _toggleBackingTrackPlayback 
+                            : () {
+                                if (mounted && context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('音声を録音・解析するとバッキングトラックが利用できます'),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
+                                }
+                              },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Column(
+                          children: [
+                            Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: hasBackingTrack
+                                      ? (_isBackingTrackPlaying 
+                                          ? [Colors.red.shade500, Colors.red.shade700]
+                                          : [Colors.green.shade500, Colors.green.shade700])
+                                      : [Colors.grey.shade400, Colors.grey.shade500],
                                 ),
-                              );
-                            }
-                          },
-                    icon: Icon(
-                      hasBackingTrack && _isBackingTrackPlaying ? Icons.stop : Icons.play_arrow,
-                      color: Colors.white,
-                    ),
-                    style: IconButton.styleFrom(
-                      backgroundColor: hasBackingTrack
-                          ? (_isBackingTrackPlaying ? Colors.red : Colors.green)
-                          : Colors.grey.shade400,
-                      padding: const EdgeInsets.all(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: hasBackingTrack
+                                        ? (_isBackingTrackPlaying ? Colors.red : Colors.green).withValues(alpha: 0.3)
+                                        : Colors.grey.withValues(alpha: 0.3),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(
+                                hasBackingTrack && _isBackingTrackPlaying ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                                size: 24,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              hasBackingTrack && _isBackingTrackPlaying ? '🎵 演奏中' : hasBackingTrack ? '🎧 演奏開始' : '🎧 演奏待ち',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: hasBackingTrack
+                                    ? (_isBackingTrackPlaying ? Colors.red.shade700 : Colors.green.shade700)
+                                    : Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  IconButton(
-                    onPressed: hasBackingTrack
-                        ? () async {
-                            final url = _analysisResult!.backingTrackUrl!;
-                            if (mounted && context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'バッキングトラックURL: $url',
-                                  ),
-                                  duration: const Duration(seconds: 3),
-                                  action: SnackBarAction(
-                                    label: 'コピー',
-                                    onPressed: () {
-                                      // URLをクリップボードにコピーする機能はプラットフォーム依存のため省略
-                                    },
-                                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: hasBackingTrack
+                              ? [Colors.white, Colors.blue.shade50]
+                              : [Colors.white, Colors.grey.shade100],
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: hasBackingTrack ? Colors.blue.shade200 : Colors.grey.shade300,
+                          width: 1,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: (hasBackingTrack ? Colors.blue : Colors.grey).withValues(alpha: 0.2),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: InkWell(
+                        onTap: hasBackingTrack
+                            ? () async {
+                                final url = _analysisResult!.backingTrackUrl!;
+                                if (mounted && context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'バッキングトラックURL: $url',
+                                      ),
+                                      duration: const Duration(seconds: 3),
+                                      action: SnackBarAction(
+                                        label: 'コピー',
+                                        onPressed: () {
+                                          // URLをクリップボードにコピーする機能はプラットフォーム依存のため省略
+                                        },
+                                      ),
+                                    ),
+                                  );
+                                }
+                              }
+                            : () {
+                                if (mounted && context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('バッキングトラックが生成されるとダウンロードできます'),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
+                                }
+                              },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Column(
+                          children: [
+                            Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: hasBackingTrack
+                                      ? [Colors.blue.shade500, Colors.blue.shade700]
+                                      : [Colors.grey.shade400, Colors.grey.shade500],
                                 ),
-                              );
-                            }
-                          }
-                        : () {
-                            if (mounted && context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('バッキングトラックが生成されるとダウンロードできます'),
-                                  duration: Duration(seconds: 2),
-                                ),
-                              );
-                            }
-                          },
-                    icon: Icon(
-                      Icons.download, 
-                      color: hasBackingTrack ? Colors.blue : Colors.grey.shade600
-                    ),
-                    style: IconButton.styleFrom(
-                      backgroundColor: hasBackingTrack
-                          ? Colors.blue.shade50
-                          : Colors.grey.shade200,
-                      padding: const EdgeInsets.all(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: (hasBackingTrack ? Colors.blue : Colors.grey).withValues(alpha: 0.3),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(
+                                Icons.download_rounded,
+                                size: 24,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              hasBackingTrack ? '💾 ダウンロード' : '💾 生成待ち',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: hasBackingTrack ? Colors.blue.shade700 : Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ],
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1603,8 +2480,13 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
     return Container(
       color: Colors.purple.shade50,
-      child: Column(
-        children: [
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: isWeb ? 800 : double.infinity, // Web版は最大幅800px
+          ),
+          child: Column(
+            children: [
           Container(
             padding: const EdgeInsets.all(16.0),
             decoration: BoxDecoration(
@@ -1623,7 +2505,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 const Icon(Icons.chat_bubble, color: Colors.purple, size: 24),
                 const SizedBox(width: 8),
                 const Text(
-                  'AI チャット',
+                  '🎵 セッション相談室',
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -1816,59 +2698,410 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             ),
           ),
         ],
+          ),
+        ),
       ),
     );
   }
 
-  Widget _buildAnalysisChip(String label, String value) {
-    return Chip(
-      avatar: CircleAvatar(
-        backgroundColor: Colors.green.shade100,
-        child: Text(
-          label.substring(0, 1),
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Colors.green,
-            fontSize: 12,
+  Widget _buildAnalysisLoadingState() {
+    final isUploading = _recordingState == RecordingState.uploading;
+    
+    return Container(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          // アニメーション付きローディングサークル
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                colors: [
+                  Colors.deepPurple.shade400,
+                  Colors.indigo.shade400,
+                  Colors.blue.shade400,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.deepPurple.withValues(alpha: 0.3),
+                  blurRadius: 16,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: const Center(
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                strokeWidth: 3,
+              ),
+            ),
           ),
+          const SizedBox(height: 24),
+          // ローディングテキスト
+          Text(
+            isUploading ? 'AI解析を実行中...' : 'AI解析を待機中',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.deepPurple.shade700,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            isUploading 
+                ? '音楽的特徴を分析しています\n少々お待ちください' 
+                : '録音完了後に自動で解析を開始します',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey.shade600,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 20),
+          // ローディング用のプレースホルダーチップ
+          GridView.count(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisCount: 2,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 1.8,
+            children: [
+              _buildLoadingChip('Key', Icons.music_note),
+              _buildLoadingChip('BPM', Icons.speed),
+              _buildLoadingChip('Chords', Icons.piano),
+              _buildLoadingChip('Genre', Icons.library_music),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingChip(String label, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.grey.shade100,
+            Colors.grey.shade200,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.grey.shade300,
+          width: 1,
         ),
       ),
-      label: Text(
-        '$label: $value',
-        style: const TextStyle(
-          color: Colors.black87,
-          fontWeight: FontWeight.w500,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade400,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  icon,
+                  color: Colors.white,
+                  size: 16,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: Colors.grey.shade500,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 11,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(
+            height: 14,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(7),
+              child: LinearProgressIndicator(
+                backgroundColor: Colors.transparent,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.grey.shade400),
+              ),
+            ),
+          ),
+        ],
       ),
-      backgroundColor: Colors.green.shade50,
-      shape: StadiumBorder(
-        side: BorderSide(color: Colors.green.shade200, width: 1.0),
+    );
+  }
+
+  Widget _buildAnalysisChip(String label, String value, IconData icon) {
+    return Container(
+      constraints: isWeb ? const BoxConstraints(maxHeight: 100) : null, // Web版は最大高さ制限
+      padding: EdgeInsets.all(isWeb ? 12 : 16), // Web版は少し小さく
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white,
+            Colors.grey.shade50,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.grey.shade200,
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.deepPurple.shade400,
+                      Colors.indigo.shade400,
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  icon,
+                  color: Colors.white,
+                  size: isWeb ? 14 : 16, // Web版は少し小さく
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w600,
+                    fontSize: isWeb ? 10 : 11, // Web版は少し小さく
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              color: Colors.grey.shade800,
+              fontWeight: FontWeight.bold,
+              fontSize: isWeb ? 12 : 14, // Web版は少し小さく
+              letterSpacing: 0.2,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildUploadingIndicator() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16.0),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: math.min(80, MediaQuery.of(context).size.width * 0.2),
-            height: math.min(80, MediaQuery.of(context).size.width * 0.2),
-            child: _buildCustomLoadingAnimation(),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'AIが解析中です...',
-            style: TextStyle(
-              color: Colors.blue,
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-            ),
+    // 状態に応じたメッセージとアイコンを決定
+    String titleText;
+    String subtitle;
+    List<Color> gradientColors;
+    
+    switch (_recordingState) {
+      case RecordingState.idle:
+        titleText = 'AI解析待機中';
+        subtitle = 'AIがあなたの鼻歌を解析して自動的に伴奏を生成します';
+        gradientColors = [Colors.cyan.shade50, Colors.blue.shade50, Colors.indigo.shade50];
+        break;
+      case RecordingState.recording:
+        titleText = '録音実行中';
+        subtitle = '音声を収集しています';
+        gradientColors = [Colors.red.shade50, Colors.pink.shade50, Colors.orange.shade50];
+        break;
+      case RecordingState.uploading:
+        titleText = 'AI解析実行中';
+        subtitle = '音楽的特徴を分析しています';
+        gradientColors = [Colors.deepPurple.shade50, Colors.indigo.shade50, Colors.blue.shade50];
+        break;
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 16.0),
+      padding: const EdgeInsets.all(24.0),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: gradientColors,
+        ),
+        borderRadius: BorderRadius.circular(24.0),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withValues(alpha: 0.1),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
+      child: Column(
+        children: [
+          // タイトル部分（他のカードと同じスタイル）
+          Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.deepPurple.shade600,
+                    Colors.indigo.shade600,
+                    Colors.blue.shade700,
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.smart_toy_outlined,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    titleText,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // コンテンツ部分
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey.shade700,
+              height: 1.5,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          if (_recordingState == RecordingState.uploading) ...[
+            const SizedBox(height: 20),
+            _buildModernProgressBar(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModernProgressBar() {
+    return AnimatedBuilder(
+      animation: _progressAnimationController,
+      builder: (context, child) {
+        final progress = _progressAnimationController.value;
+        final percentage = (progress * 100).toInt();
+        
+        return Column(
+          children: [
+            // パーセンテージ表示
+            Text(
+              '$percentage%',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.deepPurple.shade700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            // プログレスバー
+            Container(
+              width: double.infinity,
+              height: 8,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  backgroundColor: Colors.transparent,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    Color.lerp(
+                      Colors.deepPurple.shade400,
+                      Colors.indigo.shade500,
+                      progress,
+                    ) ?? Colors.deepPurple,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            // 残り時間表示
+            Text(
+              '残り時間: ${((1 - progress) * 60).toInt()}秒',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -2095,3 +3328,4 @@ class ChatMessage {
 
   ChatMessage({required this.text, required this.isUser});
 }
+
