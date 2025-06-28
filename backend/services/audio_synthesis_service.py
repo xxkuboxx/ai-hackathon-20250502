@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 from typing import Optional
 
-from music21 import converter
+from music21 import converter, tempo
 from pydub import AudioSegment
 
 from exceptions import AudioSynthesisException
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class AudioSynthesisService:
     def __init__(self):
         # SoundFontのパスを取得
-        self.soundfont_path = f"GeneralUser GS v1.472.sf2"
+        self.soundfont_path = f"MS Basic.sf3"
         if not os.path.exists(self.soundfont_path):
             logger.error(f"SoundFontファイルが見つかりません: {self.soundfont_path}")
             raise AudioSynthesisException(detail=f"SoundFontファイルが見つかりません: {self.soundfont_path}")
@@ -41,6 +41,21 @@ class AudioSynthesisService:
 
                 # 2. MusicXMLをMIDIに変換 (music21)
                 score = converter.parse(musicxml_path)
+
+                # MusicXMLからパースしたテンポ情報を取得
+                metronome_marks = score.flat.getElementsByClass('MetronomeMark')
+                if metronome_marks:
+                    # 最初のテンポ設定を取得
+                    initial_tempo = metronome_marks[0]
+                    logger.info(f"MusicXMLからBPM: {initial_tempo.number} を検出しました。")
+                    # スコアの先頭(オフセット0)にテンポ情報を挿入して、MIDI書き出し時に反映されるようにする
+                    # 既存のテンポ情報と重複する可能性を避けるため、新しいオブジェクトとして挿入するのが安全
+                    score.insert(0, tempo.MetronomeMark(number=initial_tempo.number))
+                else:
+                    default_bpm = 120
+                    logger.warning(f"MusicXMLにテンポ情報が見つかりませんでした。デフォルトのテンポ({default_bpm})が使用されます。")
+                    score.insert(0, tempo.MetronomeMark(number=default_bpm))
+
                 score.write('midi', fp=midi_path)
                 logger.debug(f"MusicXMLからMIDIへの変換が完了しました: {midi_path}")
 
