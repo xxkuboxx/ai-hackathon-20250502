@@ -138,31 +138,31 @@ Session MUSEは、Google Cloudのサービス群を組み合わせたイベン�
 ```mermaid
 flowchart TD
     %% ユーザー層
-    A[🎤 ユーザー<br/>鼻歌録音] 
+    A[🎤 ユーザー/鼻歌録音] 
     
     %% フロントエンド層
-    B[🌐 Next.js Frontend<br/>Webアプリケーション]
+    B[🌐 Next.js Frontend/Webアプリケーション]
     
     %% Google Cloud Storage層
-    C[📁 Cloud Storage<br/>音声ファイル保存]
+    C[📁 Cloud Storage/音声ファイル保存]
     
     %% イベント処理層  
-    D[⚡ Eventarc<br/>ファイルアップロード検知]
+    D[⚡ Eventarc/ファイルアップロード検知]
     
     %% コンピュート層
-    E[🔧 Cloud Run<br/>Python + FastAPI<br/>サーバーレス処理]
+    E[🔧 Cloud Run/Python + FastAPI/サーバーレス処理]
     
     %% AI処理層
-    F[🤖 Gemini 1.5 Pro<br/>マルチモーダル音声解析]
+    F[🤖 Gemini 1.5 Pro/マルチモーダル音声解析]
     
     %% 音楽生成層
-    G[🎵 MIDI Engine<br/>バッキングトラック生成]
+    G[🎵 MIDI Engine/バッキングトラック生成]
     
     %% 出力層
-    H[🎧 音楽ファイル<br/>MP3 + MIDI]
+    H[🎧 音楽ファイル/MP3 + MIDI]
     
     %% チャット機能
-    I[💬 AI Chat<br/>音楽相談・アドバイス]
+    I[💬 AI Chat/音楽相談・アドバイス]
 
     %% データフロー
     A -->|1. 音声アップロード| B
@@ -170,7 +170,7 @@ flowchart TD
     C -->|3. イベント発生| D
     D -->|4. サービス起動| E
     E -->|5. 音声解析要求| F
-    F -->|6. 楽曲情報<br/>(キー・BPM・コード)| E
+    F -->|6. 楽曲情報(キー・BPM・コード)| E
     E -->|7. MIDI生成指示| G
     G -->|8. バッキングトラック| E
     E -->|9. 音楽ファイル生成| H
