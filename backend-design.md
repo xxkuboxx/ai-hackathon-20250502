@@ -1,127 +1,756 @@
-# SessionMUSE バックエンドAPI詳細設計書
-
+# SessionMUSE バックエンドAPI詳細設計書 (実装版)
 
 ## 1. はじめに
-本設計書は、APIの実装の指針となることを目的とします。
+本設計書は、SessionMUSE バックエンドAPIの現在の実装状況を正確に反映した技術仕様書です。実際のコードベースに基づいた詳細なアーキテクチャ設計と実装パターンを記述しています。
 
+## 2. アーキテクチャ概要と設計方針
 
-## 2. 設計方針・アーキテクチャ
- * フレームワーク: FastAPI を採用します。Pythonの型ヒントを活用した高速な開発、自動的なデータバリデーション、対話的なAPIドキュメント（Swagger UI, ReDoc）生成といった特徴が、本プロジェクトの迅速な開発に適しています。
- * 実行環境: アプリケーションをコンテナ化し、Google Cloud Run 上で実行します。これにより、トラフィックに応じた自動スケーリングを実現し、サーバー管理のオーバーヘッドを削減します。
- * 非同期処理: FastAPIの `async def` を全面的に活用し、ファイルI/Oや外部API（Gemini, Cloud Storage）呼び出しをノンブロッキングで実行します。これにより、単一のインスタンスでも高い同時接続性能を確保します。
- * データ永続化: アップロードされた音声ファイルおよび生成されたバッキングトラックは、Google Cloud Storage (GCS) に一時的なオブジェクトとして保存します。GCSのライフサイクルポリシーを設定し、ファイルは一定期間（例: 24時間、設定値で管理）後に自動的に削除されます。元音声ファイルも処理後GCSにアップロードし、同様にライフサイクル管理の対象とします。
- * AI連携: LangChain ライブラリを利用して、Google Gemini 1.5 Pro APIとの連携を抽象化・効率化します。特に、複数の音声解析タスク（キー、BPM、コード進行、ジャンル推定など）やバッキングトラック生成指示を、LangGraphを用いて並列処理可能なワークフローとして構築し、処理時間の短縮とロジックの明確化を図ります。
- * **認証**: Cloud Runサービス間の呼び出しにおいては、呼び出し元サービス（フロントエンドのCloud Runサービス）のサービスアカウントに、本バックエンドCloud Runサービスを呼び出すための適切なIAMロール (`roles/run.invoker`) を付与することで認証を行います。これにより、認可されたサービスからのリクエストのみを受け付けます。
+### 2.0. システムアーキテクチャ概要
 
-### 2.1. 設定管理
-本アプリケーションにおける設定値は、以下の方法で管理します。
- * **環境変数**: デプロイ環境ごとに異なる基本的な設定値（GCSバケット名、Geminiモデル名、ログレベルなど）は環境変数を通じてアプリケーションに渡します。
- * **Google Cloud Secret Manager**: APIキー（Gemini APIキーなど）やデータベース認証情報のようなセンシティブな情報は、Google Cloud Secret Managerに保存し、アプリケーション実行時に安全に読み込みます。
- * 管理対象の例:
-    *   `GCS_UPLOAD_BUCKET`: ユーザーがアップロードした元ファイルを保存するGCSバケット名
-    *   `GCS_TRACK_BUCKET`: AIが生成したバッキングトラックを保存するGCSバケット名
-    *   `GEMINI_API_KEY_SECRET_NAME`: Gemini APIキーが格納されているSecret Managerのシークレット名 (例: `projects/YOUR_PROJECT_ID/secrets/GEMINI_API_KEY/versions/latest`)
-    *   `GEMINI_MODEL_NAME`: 使用するGeminiモデル名 (例: `gemini-1.5-pro-latest`)
-    *   `LOG_LEVEL`: アプリケーションログのレベル (例: `INFO`, `DEBUG`)
-    *   `SIGNED_URL_EXPIRATION_SECONDS`: GCS署名付きURLの有効期間（秒数、例: 3600秒 = 1時間）
-    *   `GCS_LIFECYCLE_DAYS`: GCSオブジェクトの自動削除までの日数 (例: 1日)
-    *   `MAX_FILE_SIZE_MB`: アップロードファイルの最大サイズ（MB単位、例: 100）
+SessionMUSE バックエンドの全体アーキテクチャとコンポーネント間の関係を示します。
 
+```mermaid
+flowchart TB
+    subgraph "Client Layer"
+        Flutter["📱 Flutter App"]
+        WebBrowser["🌐 Web Browser"]
+    end
+    
+    subgraph "SessionMUSE Backend (FastAPI + Cloud Run)"
+        direction TB
+        
+        subgraph "API Layer"
+            FastAPI["🚀 FastAPI Framework"]
+            HealthCheck["/health エンドポイント"]
+            ProcessAPI["/api/process 音声処理API"]
+            ChatAPI["/api/chat AIチャットAPI"]
+        end
+        
+        subgraph "Service Layer"
+            direction LR
+            
+            subgraph "Audio Processing"
+                AudioConversion["🎧 audio_conversion_service.py\n音声フォーマット変換"]
+                AudioAnalysis["🎵 audio_analysis_service.py\nLangGraphワークフロー"]
+                AudioSynthesis["🎼 audio_synthesis_service.py\nMIDI→MP3変換"]
+            end
+            
+            subgraph "AI Services"
+                VertexChat["🤖 vertex_chat_service.py\nGeminiチャット"]
+                Prompts["📝 prompts.py\nAIプロンプト管理"]
+            end
+            
+            GCSService["📁 gcs_service.py\nファイルストレージ"]
+        end
+        
+        subgraph "Configuration"
+            Config["⚙️ config.py\npydantic-settings"]
+            LoggingConfig["📊 logging_config.py\n構造化ログ"]
+            Exceptions["⚠️ exceptions.py\nカスタム例外"]
+        end
+    end
+    
+    subgraph "External Services"
+        direction TB
+        
+        subgraph "Google Cloud Platform"
+            VertexAI["🧠 Vertex AI\nGemini 2.5 Flash Lite"]
+            GCS["📁 Cloud Storage\nバケット(uploads/tracks)"]
+        end
+        
+        subgraph "Audio Processing Tools"
+            FluidSynth["🎹 FluidSynth\nMIDI→WAV変換"]
+            FFmpeg["🎥 FFmpeg\n音声コーデック"]
+            SoundFont["🎶 GeneralUser GS\nSoundFont"]
+        end
+    end
+    
+    %% Client to API
+    Flutter -.->|"📲 HTTP/HTTPS\nマルチパートリクエスト"| FastAPI
+    WebBrowser -.->|"🌐 HTTP/HTTPS\nJSONリクエスト"| FastAPI
+    
+    %% API Routing
+    FastAPI --> ProcessAPI
+    FastAPI --> ChatAPI
+    FastAPI --> HealthCheck
+    
+    %% Service Dependencies
+    ProcessAPI --> AudioConversion
+    ProcessAPI --> AudioAnalysis
+    ProcessAPI --> AudioSynthesis
+    ProcessAPI --> GCSService
+    
+    ChatAPI --> VertexChat
+    ChatAPI --> Prompts
+    
+    %% LangGraph Workflow
+    AudioAnalysis -.->|"🔍 音声解析"| VertexAI
+    AudioAnalysis -.->|"🎼 MusicXML生成"| VertexAI
+    AudioAnalysis --> GCSService
+    
+    %% Audio Processing Pipeline
+    AudioConversion -.->|"🔄 フォーマット変換"| FFmpeg
+    AudioSynthesis -.->|"🎹 MIDIシンセサイザ"| FluidSynth
+    AudioSynthesis -.->|"🎶 サウンドフォント"| SoundFont
+    AudioSynthesis -.->|"🎥 MP3変換"| FFmpeg
+    
+    %% Storage Operations
+    GCSService -.->|"📂 ファイル操作"| GCS
+    
+    %% AI Chat
+    VertexChat -.->|"💬 チャットAPI"| VertexAI
+    
+    %% Configuration
+    Config -.-> AudioAnalysis
+    Config -.-> VertexChat
+    Config -.-> GCSService
+    LoggingConfig -.-> FastAPI
+    Exceptions -.-> FastAPI
+    
+    classDef apiStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef serviceStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef aiStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef storageStyle fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    
+    class FastAPI,ProcessAPI,ChatAPI,HealthCheck apiStyle
+    class AudioConversion,AudioAnalysis,AudioSynthesis,GCSService serviceStyle
+    class VertexAI,VertexChat,Prompts aiStyle
+    class GCS,FluidSynth,FFmpeg,SoundFont storageStyle
+```
 
-## 3. 技術スタック（詳細）
-| カテゴリ | 技術/ライブラリ | 用途 |
-|---|---|---|
-| Webフレームワーク | FastAPI | APIエンドポイントの構築、リクエスト/レスポンス処理 |
-| ASGIサーバー | Uvicorn | FastAPIアプリケーションの実行 |
-| データバリデーション | Pydantic | リクエスト/レスポンスのデータモデル定義とバリデーション |
-| ファイルアップロード | python-multipart | FastAPIでのファイルアップロード処理に必須 |
-| AIモデル連携 | LangChain, google-generativeai, LangGraph | Gemini 1.5 Pro APIの呼び出し、プロンプト管理、AI処理ワークフローの構築 |
-| クラウドストレージ | google-cloud-storage | Google Cloud Storageへのファイルアップロード/ダウンロード |
-| 設定管理 | python-dotenv (ローカル開発用), Google Cloud Secret Manager | 環境変数、機密情報の管理 |
+### 2.1. 核心的設計思想
+SessionMUSE は「音楽的テーマ理解」を中心とした AI 音楽パートナーとして設計されています。従来の音楽パラメータ（キー、BPM、コード進行）の構造化抽出から、より人間的で直感的な「トラックの雰囲気/テーマ」理解へとアプローチを進化させています。
 
+### 2.2. 技術アーキテクチャの特徴
+ * **フレームワーク**: FastAPI - Python型ヒント、自動バリデーション、OpenAPI準拠のドキュメント生成
+ * **実行環境**: Google Cloud Run - コンテナベースのサーバーレス実行、自動スケーリング対応
+ * **AIエンジン**: Google Gemini 2.5 Flash Lite Preview - マルチモーダル音声解析とMusicXML生成
+ * **ワークフロー管理**: LangGraph - AI処理の状態管理と非同期実行制御
+ * **音楽合成パイプライン**: MusicXML → MIDI → WAV → MP3 変換チェーン
+ * **ストレージ**: Google Cloud Storage - 音声ファイル、MusicXML、生成MP3の管理
+ * **音声処理**: 複数フォーマット対応（MP3/WAV/M4A/AAC/WebM）+ 自動変換機能
 
-## 4. APIエンドポイント詳細
+### 2.3. イベント駆動型アーキテクチャの準備
+現在の実装は、将来的なEventarcとの統合を見据えた設計となっており、ファイルアップロードをトリガーとする非同期処理への移行が容易な構造を採用しています。
 
+### 2.4. 設定管理（現在の実装）
+アプリケーション設定は `pydantic-settings` を使用したタイプセーフな管理を実装しています。
 
-### 4.1. 音声処理API
- * エンドポイント: `POST /api/process`
- * 説明: ユーザーがアップロードした音声ファイルを解析し、バッキングトラックを生成して、それらの情報を返却します。
- * リクエスト:
-   * Content-Type: `multipart/form-data`
-   * Body:
-     * `file`: `UploadFile` (音声ファイル: MP3, WAV)
- * 成功レスポンス (200 OK):
-   * Content-Type: `application/json`
-   * Body: (`ProcessResponse` モデル)
- * エラーレスポンス: (詳細は「6.1. エラーレスポンス体系」参照)
-   * 400 Bad Request: リクエスト形式不正、必須パラメータ欠損。(`ErrorCode.INVALID_REQUEST`)
-   * 413 Payload Too Large: ファイルサイズ超過。(`ErrorCode.FILE_TOO_LARGE`)
-   * 415 Unsupported Media Type: 対応していないファイル形式。(`ErrorCode.UNSUPPORTED_MEDIA_TYPE`)
-   * 500 Internal Server Error: 予期せぬサーバーエラー。(`ErrorCode.INTERNAL_SERVER_ERROR`)
-   * 503 Service Unavailable: 外部サービス（Gemini, GCS）連携エラー。(`ErrorCode.EXTERNAL_SERVICE_ERROR`)
- * 処理フロー:
-   1.  **リクエスト受信・パース**: FastAPIが音声ファイルをパースします。
-   2.  **バリデーション**:
-       *   ファイルのMIMEタイプが `audio/mpeg` (MP3) または `audio/wav` であることを確認します。違反時は 415エラー (`ErrorCode.UNSUPPORTED_MEDIA_TYPE`)。
-       *   ファイルサイズが設定値 (`MAX_FILE_SIZE_MB`) を超えていないか確認します。超過時は 413エラー (`ErrorCode.FILE_TOO_LARGE`)。
-   3.  **ファイルの一時保存とGCSアップロード (元ファイル)**:
-       *   一意なID（例: UUID）を生成します。
-       *   アップロードされた音声ファイルを、この一意なIDをファイル名としてGCSの指定バケット（環境変数 `GCS_UPLOAD_BUCKET` の `original/` プレフィックスなど）にストリーミングアップロードします。アップロード失敗時は 503エラー (`ErrorCode.GCS_UPLOAD_ERROR`)。
-       *   GCS上のファイルパス（または署名付きURL）を後続の処理で使用します。
-   4.  **音声解析 (AI) とバッキングトラック生成 (AI) - LangGraphによるワークフロー**:
-       *   **LangGraphワークフローの構築**: 以下のタスクをノードとして定義し、依存関係に基づいてエッジで結びつけ、並列実行可能なグラフを構築します。
-           *   **タスクA: キー推定**: GCS上の音声ファイルを参照し、Gemini APIにキーを推定させるプロンプトを送信。
-           *   **タスクB: BPM推定**: GCS上の音声ファイルを参照し、Gemini APIにBPMを推定させるプロンプトを送信。
-           *   **タスクC: コード進行推定**: GCS上の音声ファイルを参照し、Gemini APIにコード進行を推定させるプロンプトを送信。
-           *   **タスクD: ジャンル推定**: GCS上の音声ファイルを参照し、Gemini APIに楽曲のジャンルを推定させるプロンプトを送信。
-           *   **タスクE (タスクA,B,C,Dに依存): バッキングトラック生成**: タスクA～Dで得られた解析結果（キー、BPM、コード進行、AI推定ジャンル）に基づき、Gemini APIにバッキングトラック（MP3形式）の生成を指示するプロンプトを送信。
-       *   **ワークフロー実行**: 構築したLangGraphワークフローを実行します。各AIタスクの実行中にGemini APIでエラーが発生した場合は、グラフ全体のエラーとして処理し、503エラー (`ErrorCode.ANALYSIS_FAILED` または `ErrorCode.GENERATION_FAILED`)。
-       *   **結果の集約**: ワークフローの実行結果から、`AnalysisResult` モデルに必要な情報（キー、BPM、コード進行、AI推定ジャンル）と、生成されたバッキングトラックデータを取得します。
-   5.  **生成ファイルのGCSアップロード (バッキングトラック)**:
-       *   ワークフローから得られた生成バッキングトラック（MP3）を、ステップ3で生成した一意なIDに関連付けられたファイル名でGCSの指定バケット（環境変数 `GCS_TRACK_BUCKET` の `generated/` プレフィックスなど）にアップロードします。アップロード失敗時は 503エラー (`ErrorCode.GCS_UPLOAD_ERROR`)。
-   6.  **レスポンス生成**:
-       *   GCSにアップロードしたバッキングトラックの署名付きURL（ダウンロード可能な一時URL）を生成します。有効期間は設定値 (`SIGNED_URL_EXPIRATION_SECONDS`) に従います。URL生成失敗時は 500エラー (`ErrorCode.INTERNAL_SERVER_ERROR`)。
-       *   GCSにアップロードしたオリジナルファイルの署名付きURLも同様に生成します。
-       *   `ProcessResponse` モデルに従ってJSONレスポンスを構築し、クライアントに返却します。`AnalysisResult` にはAIが推定したジャンル (`genre_by_ai`) も含めます。
-   7.  **クリーンアップ**:
-       *   GCSのライフサイクル設定により、アップロードされた元ファイルと生成ファイルは一定期間（設定値 `GCS_LIFECYCLE_DAYS`）後に自動削除されます。ローカルに一時ファイルを作成した場合は、処理完了後に速やかに削除します。
-
-
-### 4.2. AIチャットAPI
- * エンドポイント: `POST /api/chat`
- * 説明: ユーザーからの質問と音楽的文脈を受け取り、AIからのアドバイスを生成して返却します。
- * リクエスト:
-   * Content-Type: `application/json`
-   * Body: (`ChatRequest` モデル)
- * 成功レスポンス (200 OK):
-   * Content-Type: `application/json` (デフォルト) または `text/event-stream` (ストリーミング時)
-   * Body: (`ChatMessage` モデル、ストリーミングの場合は `data: {ChatMessage}\n\n` 形式)
- * エラーレスポンス: (詳細は「6.1. エラーレスポンス体系」参照)
-   * 400 Bad Request: リクエスト形式不正、必須パラメータ欠損。(`ErrorCode.INVALID_REQUEST`)
-   * 503 Service Unavailable: Gemini API連携エラー。(`ErrorCode.EXTERNAL_SERVICE_ERROR`)
- * 処理フロー:
-   1.  **リクエスト受信・バリデーション**: リクエストボディを `ChatRequest` モデルとして受信し、Pydanticによるバリデーションを実行します。バリデーションエラー時は 400エラー (`ErrorCode.INVALID_REQUEST`)。
-   2.  **システムプロンプト構築**: AIの役割と応答スタイルを定義するシステムプロンプトを準備します。
-       > あなたは「SessionMUSE」という名の、親切で創造的なAI音楽パートナーです。音楽理論に詳しく、抽象的な表現も具体的なアイデアに変換できます。ユーザーの音楽制作をサポートし、インスピレーションを与えるような、ポジティブで建設的なフィードバックを提供してください。
-   3.  **コンテキスト付与**: リクエストに含まれる `analysis_context` (キー, BPM, コード進行、AI推定ジャンル) と `messages` (過去の対話履歴) をプロンプトに組み込み、AIに現在の文脈を正確に伝えます。
-   4.  **AIモデル呼び出し**: LangChainを介して、構築したプロンプトをGemini 1.5 Pro APIに送信します。Gemini API呼び出し時にエラーが発生した場合（例: APIキー不正、レート制限、コンテンツフィルターなど）は 503エラー (`ErrorCode.GEMINI_API_ERROR`)。
-   5.  **レスポンス返却**:
-       *   クライアントがリクエストヘッダー `Accept: text/event-stream` を指定した場合: Gemini APIから逐次的に返されるテキストトークンを、FastAPIの `StreamingResponse` を使ってSSE (Server-Sent Events) 形式でフロントエンドに転送します。各メッセージは `ChatMessage` のJSON形式で `data:` フィールドに含めます。
-       *   上記以外の場合 (デフォルト): APIからの応答が完了してから、`ChatMessage` モデルに従ったJSONレスポンスを返却します。
-   6.  **エラー処理**: 処理中に予期せぬエラーが発生した場合は、500エラー (`ErrorCode.INTERNAL_SERVER_ERROR`) を返却します。
-
-
-## 5. データモデル (Pydantic)
-APIのI/Oは以下のPydanticモデルによって厳密に定義されます。
-
-
+#### 主要設定項目（config.py）:
 ```python
-from pydantic import BaseModel, Field, HttpUrl
-from typing import List, Literal, Optional
-from enum import Enum
+class Settings(BaseSettings):
+    # GCS ストレージ設定
+    GCS_UPLOAD_BUCKET: str       # ユーザーアップロードファイル用バケット
+    GCS_TRACK_BUCKET: str        # 生成されたMusicXML/MP3用バケット
+    GCS_LIFECYCLE_DAYS: int = 1   # 自動削除までの日数
+    
+    # Vertex AI / Gemini 設定
+    VERTEX_AI_LOCATION: str = "global"
+    ANALYZER_GEMINI_MODEL_NAME: str = "gemini-2.5-flash-lite-preview-06-17"
+    GENERATOR_GEMINI_MODEL_NAME: str = "gemini-2.5-flash-lite-preview-06-17"
+    CHAT_GEMINI_MODEL_NAME: str = "gemini-2.5-flash-lite-preview-06-17"
+    VERTEX_AI_TIMEOUT_SECONDS: int = 120
+    
+    # アプリケーション設定
+    LOG_LEVEL: str = "INFO"
+    MAX_FILE_SIZE_MB: int = 100
+    PORT_LOCAL_DEV: int = 8000
+```
+
+#### 設定の特徴:
+- **統一Geminiモデル**: すべてのAI処理で `gemini-2.5-flash-lite-preview-06-17` を使用
+- **分離されたストレージ**: アップロードとトラック用で異なるGCSバケット
+- **環境別設定**: `.env` ファイルまたは環境変数による設定注入対応
 
 
-# エラーコード定義 (エラーレスポンスで使用)
+## 3. 技術スタック（実装詳細）
+
+### 3.1. 核心フレームワークとライブラリ
+| カテゴリ | 技術/ライブラリ | 実装での役割 |
+|---|---|---|
+| **Webフレームワーク** | FastAPI | APIエンドポイント、自動バリデーション、OpenAPIドキュメント生成 |
+| **ASGIサーバー** | Uvicorn | 本番・開発環境でのFastAPIアプリケーション実行 |
+| **データモデル** | Pydantic v2 | リクエスト/レスポンスモデル、設定管理 (`pydantic-settings`) |
+| **AI処理基盤** | LangChain + LangGraph | Gemini APIとの統合、ワークフロー状態管理 |
+| **Vertex AI統合** | langchain-google-vertexai | Google Gemini 2.5モデルとの直接連携 |
+| **音楽処理** | music21, pydub | MusicXML→MIDI変換、MP3音声処理 |
+| **音声合成** | FluidSynth | MIDI→WAV変換（`GeneralUser GS v1.472.sf2` SoundFont使用）|
+| **クラウドストレージ** | google-cloud-storage | GCS操作（アップロード/ダウンロード/公開URL生成）|
+| **音声変換** | カスタム実装 | WebM/AAC→WAV変換サービス |
+
+### 3.2. アーキテクチャ構成
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   FastAPI App   │────│   LangGraph      │────│  Gemini 2.5     │
+│   (main.py)     │    │   Workflow       │    │  Flash Lite     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         │                       │                       │
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   GCS Service   │    │ Audio Analysis   │    │ Audio Synthesis │
+│   (Storage)     │    │ Service          │    │ Service         │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         │                       │                       │
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Cloud Storage  │    │   MusicXML       │    │   FluidSynth    │
+│  (Audio Files)  │    │   Generator      │    │   (MIDI→WAV)    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+
+## 4. APIエンドポイント詳細（現在の実装）
+
+### 4.0. APIエンドポイント全体構成
+
+FastAPIフレームワークによるRESTful API設計と各エンドポイントの関係を示します。
+
+```mermaid
+flowchart TD
+    subgraph "SessionMUSE FastAPI Backend"
+        direction TB
+        
+        subgraph "Main Application (main.py)"
+            App["🚀 FastAPI App\nCORS + Middleware"]
+            
+            subgraph "Health Check"
+                Health["/health\nGET"]
+                HealthCheck["❤️ システム状態確認"]
+            end
+        end
+        
+        subgraph "Audio Processing Router (process_api.py)"
+            direction TB
+            
+            ProcessEndpoint["/api/process\nPOST"]
+            
+            subgraph "Request Processing"
+                FileValidation["📎 ファイルバリデーション\n(MIME/サイズ)"]
+                AudioConversion["🔄 音声変換\n(WebM/AAC→WAV)"]
+                GCSUpload["📁 GCSアップロード"]
+            end
+            
+            subgraph "AI Workflow Execution"
+                WorkflowLaunch["🎆 LangGraphワークフロー開始"]
+                AudioAnalysis["🎧 音声解析\n(Geminiマルチモーダル)"]
+                MusicXMLGen["🎼 MusicXML生成"]
+                AudioSynthesis["🎹 MIDI→MP3変換"]
+            end
+            
+            ResponseFormat["📦 レスポンスフォーマット\n{analysis, URLs}"]
+        end
+        
+        subgraph "Chat Router (chat_api.py)"
+            direction TB
+            
+            ChatEndpoint["/api/chat\nPOST"]
+            
+            subgraph "Chat Processing"
+                MessageValidation["📝 メッセージバリデーション"]
+                ContextRetrieval["🔍 コンテキスト取得\n(MusicXML GCSダウンロード)"]
+                PromptConstruction["📝 プロンプト構築"]
+                AIChat["🤖 GeminiチャットAPI"]
+            end
+            
+            StreamingResponse["🔄 ストリーミングレスポンス\n(Server-Sent Events)"]
+        end
+        
+        subgraph "Error Handling & Middleware"
+            CustomExceptions["⚠️ Custom Exceptions\n(FILE_TOO_LARGE, ANALYSIS_FAILED...)"]
+            CORSMiddleware["🌐 CORSミドルウェア"]
+            LoggingMiddleware["📊 ログミドルウェア"]
+        end
+    end
+    
+    subgraph "External Dependencies"
+        
+        subgraph "Services"
+            AudioConversionService["🎧 audio_conversion_service"]
+            AudioAnalysisService["🎵 audio_analysis_service"]
+            AudioSynthesisService["🎼 audio_synthesis_service"]
+            VertexChatService["🤖 vertex_chat_service"]
+            GCSService["📁 gcs_service"]
+        end
+        
+        subgraph "Google Cloud"
+            VertexAI["🧠 Vertex AI\nGemini 2.5 Flash Lite"]
+            CloudStorage["📁 Cloud Storage"]
+        end
+        
+        subgraph "Audio Tools"
+            FluidSynth["🎹 FluidSynth"]
+            FFmpeg["🎥 FFmpeg"]
+        end
+    end
+    
+    %% Main App Flow
+    App --> Health
+    App --> ProcessEndpoint
+    App --> ChatEndpoint
+    
+    Health --> HealthCheck
+    
+    %% Process API Flow
+    ProcessEndpoint --> FileValidation
+    FileValidation --> AudioConversion
+    AudioConversion --> GCSUpload
+    GCSUpload --> WorkflowLaunch
+    
+    WorkflowLaunch --> AudioAnalysis
+    AudioAnalysis --> MusicXMLGen
+    MusicXMLGen --> AudioSynthesis
+    AudioSynthesis --> ResponseFormat
+    
+    %% Chat API Flow  
+    ChatEndpoint --> MessageValidation
+    MessageValidation --> ContextRetrieval
+    ContextRetrieval --> PromptConstruction
+    PromptConstruction --> AIChat
+    AIChat --> StreamingResponse
+    
+    %% Service Dependencies
+    AudioConversion -.-> AudioConversionService
+    AudioAnalysis -.-> AudioAnalysisService
+    AudioSynthesis -.-> AudioSynthesisService
+    AIChat -.-> VertexChatService
+    GCSUpload -.-> GCSService
+    ContextRetrieval -.-> GCSService
+    
+    %% External Service Connections
+    AudioAnalysisService -.-> VertexAI
+    VertexChatService -.-> VertexAI
+    GCSService -.-> CloudStorage
+    AudioConversionService -.-> FFmpeg
+    AudioSynthesisService -.-> FluidSynth
+    AudioSynthesisService -.-> FFmpeg
+    
+    %% Error Handling
+    App -.-> CustomExceptions
+    App -.-> CORSMiddleware
+    App -.-> LoggingMiddleware
+    
+    classDef apiStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef serviceStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef aiStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef toolStyle fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    
+    class App,ProcessEndpoint,ChatEndpoint,Health apiStyle
+    class AudioConversionService,AudioAnalysisService,AudioSynthesisService,GCSService serviceStyle
+    class VertexAI,VertexChatService,AIChat aiStyle
+    class FluidSynth,FFmpeg,CloudStorage toolStyle
+```
+
+### 4.1. 音声処理API（テーマベース + MusicXML生成）
+**エンドポイント**: `POST /api/process`
+
+**説明**: ユーザーの口ずさみ音声から「トラックの雰囲気/テーマ」を理解し、MusicXMLとMP3を生成する新世代の音楽AI処理。
+
+#### リクエスト仕様:
+```http
+POST /api/process
+Content-Type: multipart/form-data
+
+file: <音声ファイル>
+```
+
+#### 対応音声フォーマット:
+- **MP3** (`audio/mpeg`)
+- **WAV** (`audio/wav`, `audio/x-wav`)  
+- **M4A** (`audio/mp4`, `audio/x-m4a`)
+- **AAC** (`audio/aac`)
+- **WebM** (`audio/webm`) ※自動WAV変換
+
+#### 処理フローの革新（従来のパラメータ抽出 → テーマ理解）:
+
+1. **マルチフォーマット音声受信**
+   - 自動MIME検出とファイル拡張子マッピング
+   - WebM/AAC → WAV 自動変換（AudioConversionService）
+   - ファイルサイズ検証（MAX_FILE_SIZE_MB）
+
+2. **GCSストレージ管理**
+   ```python
+   # アップロード先: gs://{GCS_UPLOAD_BUCKET}/original/{file_id}.{ext}
+   gcs_original_file_uri = await gcs_service.upload_file_obj_to_gcs(
+       file_obj=processed_file_obj,
+       bucket_name=settings.GCS_UPLOAD_BUCKET,
+       destination_blob_name=f"original/{file_id}{extension}"
+   )
+   ```
+
+3. **LangGraphによるAIワークフロー実行**
+
+   ワークフローエンジンは状態管理、エラーハンドリング、非同期処理を統合管理します。
+
+```mermaid
+flowchart TD
+    subgraph "LangGraph Audio Analysis Workflow"
+        direction TB
+        
+        Start(["Workflow Start"]) 
+        State[["💾 AudioAnalysisWorkflowState\n- gcs_file_path\n- workflow_run_id\n- humming_analysis_theme\n- generated_musicxml_data\n- final_analysis_result"]]
+        
+        subgraph "Node 1: Audio Theme Analysis"
+            AnalyzeStart["🎧 node_analyze_humming_audio"]
+            LoadFile["📁 GCSから音声ファイル読み込み"]
+            GeminiAnalyze["🤖 Gemini 2.5 Flash Lite\n音声マルチモーダル解析"]
+            ExtractTheme["🎵 テーマ抽出\n(例: '明るくエネルギッシュなJ-POP風')"]
+        end
+        
+        subgraph "Node 2: MusicXML Generation"
+            GenerateStart["🎼 node_generate_musicxml"]
+            ContextPrompt["📝 コンテキストプロンプト生成"]
+            GeminiGenerate["🤖 Gemini MusicXML生成"]
+            ValidateXML["✔️ MusicXMLバリデーション"]
+        end
+        
+        subgraph "Error Handling Nodes"
+            HandleAnalysisError["⚠️ node_handle_analysis_error"]
+            HandleGenerationError["⚠️ node_handle_generation_error"]
+            LogError["📊 エラーログ出力"]
+            SetErrorState["🚨 エラー状態設定"]
+        end
+        
+        Conditional{{"🔄 should_proceed_to_generation"}}
+        GenerationConditional{{"🔄 is_generation_successful"}}
+        
+        Success(["Workflow Success"])
+        Failure(["Workflow Failure"])
+        
+        %% Main Flow
+        Start --> State
+        State --> AnalyzeStart
+        
+        AnalyzeStart --> LoadFile
+        LoadFile --> GeminiAnalyze
+        GeminiAnalyze --> ExtractTheme
+        ExtractTheme --> Conditional
+        
+        Conditional -->|"continue"| GenerateStart
+        Conditional -->|"error"| HandleAnalysisError
+        
+        GenerateStart --> ContextPrompt
+        ContextPrompt --> GeminiGenerate
+        GeminiGenerate --> ValidateXML
+        ValidateXML --> GenerationConditional
+        
+        GenerationConditional -->|"success"| Success
+        GenerationConditional -->|"error"| HandleGenerationError
+        
+        %% Error Handling
+        HandleAnalysisError --> LogError
+        HandleGenerationError --> LogError
+        LogError --> SetErrorState
+        SetErrorState --> Failure
+        
+        %% State Updates
+        ExtractTheme -.->|"状態更新"| State
+        ValidateXML -.->|"状態更新"| State
+    end
+    
+    classDef nodeStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef aiStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef errorStyle fill:#ffebee,stroke:#d32f2f,stroke-width:2px
+    classDef stateStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    
+    class AnalyzeStart,GenerateStart nodeStyle
+    class GeminiAnalyze,GeminiGenerate aiStyle
+    class HandleAnalysisError,HandleGenerationError,LogError,SetErrorState errorStyle
+    class State,Conditional,GenerationConditional stateStyle
+```
+
+   ```python
+   # AudioAnalysisWorkflowState の管理
+   workflow_state = await run_audio_analysis_workflow(gcs_file_path)
+   
+   # ワークフローノード:
+   # 1. node_analyze_humming_audio: 口ずさみ → テーマ解析
+   # 2. node_generate_musicxml: テーマ → MusicXML生成
+   ```
+
+4. **AI解析: 口ずさみ → トラックテーマ**
+   ```python
+   # Gemini 2.5 Flash Lite による直接音声理解
+   humming_theme = await audio_analyzer.analyze_humming_audio(
+       gcs_file_path, workflow_run_id
+   )
+   # 例: "明るくエネルギッシュなJ-POP風のメロディー"
+   ```
+
+5. **MusicXML生成**
+   ```python
+   # テーマと音声から構造化された楽譜データを生成
+   musicxml_data = await audio_analyzer.generate_musicxml_from_theme(
+       gcs_file_path, humming_theme, workflow_run_id
+   )
+   ```
+
+6. **音楽合成パイプライン**
+
+   AIが生成したMusicXMLから高品質MP3ファイルを生成するパイプラインを示します。
+
+```mermaid
+flowchart LR
+    subgraph "Audio Synthesis Pipeline (audio_synthesis_service.py)"
+        direction TB
+        
+        MusicXML["🎼 MusicXMLデータ\n(Gemini生成)"]
+        
+        subgraph "MIDI Conversion"
+            Music21["🎵 music21ライブラリ"]
+            MIDIGeneration["🎹 MIDIファイル生成"]
+            TempMIDI["📁 一時MIDIファイル\n/tmp/{uuid}.mid"]
+        end
+        
+        subgraph "FluidSynth Synthesis"
+            FluidSynth["🎶 FluidSynth"]
+            SoundFont["🎵 GeneralUser GS v1.472.sf2\nSoundFont"]
+            WAVGeneration["🎧 WAV音声合成"]
+            TempWAV["📁 一時WAVファイル\n/tmp/{uuid}.wav"]
+        end
+        
+        subgraph "MP3 Compression"
+            FFmpeg["🎥 FFmpeg"]
+            MP3Encoding["🎵 MP3エンコード"]
+            QualitySettings["⚙️ 品質設定\n192kbps, 44.1kHz"]
+            FinalMP3["🎧 最終MP3ファイル"]
+        end
+        
+        subgraph "GCS Upload"
+            GCSService["📁 GCS Service"]
+            UploadMP3["☁️ GCSアップロード"]
+            PublicURL["🌐 公開アクセスURL"]
+        end
+        
+        subgraph "Cleanup"
+            TempCleanup["🗑️ 一時ファイル削除"]
+        end
+    end
+    
+    %% Main Flow
+    MusicXML --> Music21
+    Music21 --> MIDIGeneration
+    MIDIGeneration --> TempMIDI
+    
+    TempMIDI --> FluidSynth
+    FluidSynth --> SoundFont
+    SoundFont --> WAVGeneration
+    WAVGeneration --> TempWAV
+    
+    TempWAV --> FFmpeg
+    FFmpeg --> MP3Encoding
+    MP3Encoding --> QualitySettings
+    QualitySettings --> FinalMP3
+    
+    FinalMP3 --> GCSService
+    GCSService --> UploadMP3
+    UploadMP3 --> PublicURL
+    
+    PublicURL --> TempCleanup
+    
+    %% Error Handling
+    Music21 -.->|"エラー"| TempCleanup
+    FluidSynth -.->|"エラー"| TempCleanup
+    FFmpeg -.->|"エラー"| TempCleanup
+    
+    classDef inputStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef processStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef outputStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef toolStyle fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    
+    class MusicXML inputStyle
+    class Music21,FFmpeg,GCSService processStyle
+    class FinalMP3,PublicURL outputStyle
+    class FluidSynth,SoundFont toolStyle
+```
+
+   ```python
+   # MusicXML → MIDI → WAV → MP3
+   mp3_data = await audio_synthesis_service.synthesize_musicxml_to_mp3(
+       musicxml_data
+   )
+   # FluidSynth + GeneralUser GS v1.472.sf2 SoundFont使用
+   ```
+
+7. **マルチファイル配信**
+   ```json
+   {
+     "analysis": {
+       "humming_theme": "明るくエネルギッシュなJ-POP風のメロディー"
+     },
+     "backing_track_url": "https://storage.googleapis.com/.../file.musicxml",
+     "original_file_url": "https://storage.googleapis.com/.../original.wav", 
+     "generated_mp3_url": "https://storage.googleapis.com/.../generated.mp3"
+   }
+   ```
+
+#### エラーハンドリング:
+- **413**: ファイルサイズ超過 (`FILE_TOO_LARGE`)
+- **415**: 非対応フォーマット (`UNSUPPORTED_MEDIA_TYPE`) 
+- **503**: AI解析失敗 (`ANALYSIS_FAILED`)
+- **503**: MusicXML生成失敗 (`GENERATION_FAILED`)
+- **503**: 音声変換失敗 (`AUDIO_CONVERSION_EXCEPTION`)
+
+
+### 4.2. AIチャットAPI（MusicXML対応の音楽相談）
+**エンドポイント**: `POST /api/chat`
+
+**説明**: 音楽的テーマとMusicXMLを理解するAI音楽パートナーとの対話。抽象的な表現も具体的なアドバイスに変換。
+
+#### リクエスト仕様:
+```json
+{
+  "messages": [
+    {"role": "user", "content": "このメロディーをもっとドラマチックにするには？"},
+    {"role": "assistant", "content": "マイナーセブンスコードを..."}
+  ],
+  "analysis_context": {
+    "humming_theme": "明るくエネルギッシュなJ-POP風のメロディー"
+  },
+  "musicxml_gcs_url": "https://storage.googleapis.com/.../file.musicxml"
+}
+```
+
+#### 処理フローの特徴:
+
+1. **高度なコンテキスト理解**
+   ```python
+   # vertex_chat_service.py 実装
+   context_parts = []
+   if analysis_context and analysis_context.humming_theme:
+       context_parts.append(f"ユーザーが口ずさんだメロディの雰囲気/テーマ: 「{analysis_context.humming_theme}」")
+   
+   if musicxml_content:
+       context_parts.append(f"このテーマに基づいて生成されたMusicXMLの内容:\n```musicxml\n{musicxml_content}\n```")
+   ```
+
+2. **MusicXMLダウンロードと統合**
+   ```python
+   # GCS URLからMusicXMLコンテンツを取得
+   if musicxml_gcs_url:
+       musicxml_content = await gcs_service.download_file_as_string_from_gcs(
+           musicxml_gcs_url
+       )
+   ```
+
+3. **SessionMUSE AIペルソナ**
+   - プロンプトベースの音楽理論専門家
+   - 抽象的表現 → 具体的技術アドバイス変換
+   - ポジティブ&建設的フィードバック
+
+4. **ストリーミング対応**
+   ```python
+   # SSE (Server-Sent Events) でリアルタイム応答
+   Accept: text/event-stream
+   
+   # レスポンス形式
+   data: {"role": "assistant", "content": "その場合は"}
+   data: {"role": "assistant", "content": "Dマイナーに"}
+   data: {"role": "assistant", "content": "転調することで..."}
+   ```
+
+#### エラーハンドリング:
+- **400**: リクエスト形式不正 (`INVALID_REQUEST`)
+- **503**: Vertex AI API エラー (`VERTEX_AI_API_ERROR`)
+- **503**: セーフティフィルターブロック (`VERTEX_AI_API_ERROR`)
+- **503**: タイムアウト (`VERTEX_AI_API_ERROR`)
+
+
+## 5. データモデル（現在の実装版）
+
+SessionMUSE の現在のデータモデルは、テーマベースの音楽理解とMusicXML生成ワークフローに特化した設計となっています。
+
+### 5.0. データモデル関係図
+
+Pydanticモデルとデータフローの関係を示します。
+
+```mermaid
+classDiagram
+    class ErrorCode {
+        <<enumeration>>
+        +INVALID_REQUEST
+        +FILE_TOO_LARGE
+        +UNSUPPORTED_MEDIA_TYPE
+        +ANALYSIS_FAILED
+        +GENERATION_FAILED
+        +VERTEX_AI_API_ERROR
+        +AUDIO_CONVERSION_EXCEPTION
+    }
+    
+    class SessionMUSEHTTPException {
+        +error_code: ErrorCode
+        +message: str
+        +details: Dict[str, Any]
+        +status_code: int
+        +headers: Dict[str, str]
+    }
+    
+    class AudioAnalysisWorkflowState {
+        +gcs_file_path: str
+        +workflow_run_id: Optional[str]
+        +humming_analysis_theme: Optional[str]
+        +generated_musicxml_data: Optional[str]
+        +final_analysis_result: Optional[AnalysisResult]
+    }
+    
+    class AnalysisResult {
+        +humming_theme: str
+        +supporting_analysis: Optional[str]
+    }
+    
+    class ProcessResponseData {
+        +analysis: AnalysisResult
+        +original_file_url: str
+        +backing_track_url: str
+        +generated_mp3_url: str
+    }
+    
+    class ChatRequest {
+        +messages: List[ChatMessage]
+        +musicxml_gcs_url: Optional[str]
+        +analysis_context: Optional[AnalysisResult]
+    }
+    
+    class ChatMessage {
+        +role: str
+        +content: str
+    }
+    
+    class ChatResponse {
+        +role: str
+        +content: str
+    }
+    
+    class HealthCheckResponse {
+        +status: str
+        +timestamp: str
+        +version: str
+        +environment: str
+    }
+    
+    %% Relationships
+    SessionMUSEHTTPException --> ErrorCode : uses
+    AudioAnalysisWorkflowState --> AnalysisResult : contains
+    ProcessResponseData --> AnalysisResult : contains
+    ChatRequest --> ChatMessage : contains
+    ChatRequest --> AnalysisResult : references
+    
+    %% Data Flow Relationships
+    AudioAnalysisWorkflowState -.-> ProcessResponseData : generates
+    ChatRequest -.-> ChatResponse : produces
+    
+    classDef errorClass fill:#ffebee,stroke:#d32f2f,stroke-width:2px
+    classDef workflowClass fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef apiClass fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef dataClass fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    
+    class ErrorCode,SessionMUSEHTTPException errorClass
+    class AudioAnalysisWorkflowState workflowClass
+    class ProcessResponseData,ChatRequest,ChatResponse,HealthCheckResponse apiClass
+    class AnalysisResult,ChatMessage dataClass
+```
+
+### 5.1. エラー管理モデル
+```python
 class ErrorCode(str, Enum):
     INVALID_REQUEST = "INVALID_REQUEST"
     INVALID_FILE_TYPE = "INVALID_FILE_TYPE"
@@ -130,107 +759,255 @@ class ErrorCode(str, Enum):
     GCS_UPLOAD_ERROR = "GCS_UPLOAD_ERROR"
     ANALYSIS_FAILED = "ANALYSIS_FAILED"
     GENERATION_FAILED = "GENERATION_FAILED"
-    GEMINI_API_ERROR = "GEMINI_API_ERROR"
+    VERTEX_AI_API_ERROR = "VERTEX_AI_API_ERROR"          # Gemini API専用
     EXTERNAL_SERVICE_ERROR = "EXTERNAL_SERVICE_ERROR"
     INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR"
-    AUTHENTICATION_REQUIRED = "AUTHENTICATION_REQUIRED" # 将来的な拡張用
-    FORBIDDEN_ACCESS = "FORBIDDEN_ACCESS"           # 将来的な拡張用
-    RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED"     # 将来的な拡張用
-
+    AUTHENTICATION_REQUIRED = "AUTHENTICATION_REQUIRED"
+    FORBIDDEN_ACCESS = "FORBIDDEN_ACCESS"
+    RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED"
 
 class ErrorDetail(BaseModel):
     code: ErrorCode
     message: str
     detail: Optional[str] = None
 
-
 class ErrorResponse(BaseModel):
     error: ErrorDetail
+```
 
+### 5.2. 音声処理APIモデル（革新的変更）
 
-# /api/process -------------------
+#### 従来モデル（削除済み）:
+```python
+# ❌ 削除されたモデル（過去の構造化アプローチ）
+# class ChordProgressionOutput, KeyOutput, BpmOutput, GenreOutput
+```
 
-
+#### 現在のモデル（テーマベース）:
+```python
+# ✅ 新しいアプローチ: 人間的な音楽理解
 class AnalysisResult(BaseModel):
-    key: str = Field(..., description="解析されたキー", example="C Major")
-    bpm: int = Field(..., description="解析されたBPM", example=120, gt=0)
-    chords: List[str] = Field(..., description="解析されたコード進行", example=["C", "G", "Am", "F"])
-    genre_by_ai: str = Field(..., description="AIによって推定されたジャンル", example="Pop Ballad")
-
+    humming_theme: str = Field(
+        ..., 
+        description="口ずさみ音声から解析されたトラックの雰囲気/テーマ", 
+        example="明るくエネルギッシュなJ-POP"
+    )
+    # 注意: key, bpm, chords, genre_by_ai は廃止
 
 class ProcessResponse(BaseModel):
     analysis: AnalysisResult
-    backing_track_url: HttpUrl = Field(..., description="生成されたバッキングトラックの署名付きURL")
-    original_file_url: Optional[HttpUrl] = Field(None, description="アップロードされたオリジナルファイルの署名付きURL (確認用など)")
+    backing_track_url: HttpUrl = Field(
+        ..., 
+        description="生成されたバッキングトラックMusicXMLの公開URL"
+    )
+    original_file_url: Optional[HttpUrl] = Field(
+        None, 
+        description="アップロードされたオリジナル音声ファイルの公開URL"
+    )
+    generated_mp3_url: Optional[HttpUrl] = Field(
+        None, 
+        description="生成されたMP3ファイルの公開URL"
+    )
+```
 
-
-# /api/chat ----------------------
-
-
+### 5.3. チャットAPIモデル（MusicXML対応）
+```python
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
 
-
 class ChatRequest(BaseModel):
-    messages: List[ChatMessage] = Field(..., min_items=1)
-    analysis_context: Optional[AnalysisResult] = Field(None, description="現在の楽曲の解析情報（AI推定ジャンル含む）") # フロントエンドから送信される際は AnalysisResult の形式に従う
-
-
+    messages: List[ChatMessage] = Field(
+        ..., 
+        min_length=1, 
+        description="対話履歴。最低1件のメッセージが必要。"
+    )
+    analysis_context: Optional[AnalysisResult] = Field(
+        None, 
+        description="現在の楽曲の解析情報（トラックの雰囲気/テーマ）"
+    )
+    musicxml_gcs_url: Optional[HttpUrl] = Field(
+        None, 
+        description="MusicXMLファイルが格納されているGoogle Cloud StorageのURL。指定された場合、ここからMusicXMLを取得します。"
+    )
 ```
 
+### 5.4. 内部ワークフロー状態管理（LangGraph）
+```python
+class AudioAnalysisWorkflowState(TypedDict):
+    gcs_file_path: str
+    workflow_run_id: Optional[str]
+    humming_analysis_theme: Optional[str]
+    humming_analysis_error: Optional[str] 
+    generated_musicxml_data: Optional[str]
+    musicxml_generation_error: Optional[str]
+    final_analysis_result: Optional[AnalysisResult]
+    analysis_handled: Optional[bool]
+    generation_handled: Optional[bool]
+    entry_point_completed: Optional[bool]
+```
 
-## 6. セキュリティと堅牢性
+### 5.5. モデル設計の哲学的変化
 
-
-### 6.1. エラーハンドリングとレスポンス体系
-FastAPIの例外ハンドラ (`@app.exception_handler`) を利用して、アプリケーション内で発生する様々な例外を捕捉し、一貫性のあるエラーレスポンスをクライアントに返却します。
-
-
-*   **共通エラーレスポンス**: 全てのエラーレスポンスは、`ErrorResponse` モデルに従ったJSON形式で返却されます。
-    ```json
-    {
-      "error": {
-        "code": "ERROR_CODE_ENUM",
-        "message": "人が読んで理解できるエラーメッセージ",
-        "detail": "（オプション）エラーに関する追加の詳細情報やデバッグ情報"
-      }
-    }
-    ```
-*   **HTTPステータスコード**:
-    *   `4xx`系: クライアント側の起因によるエラー。
-    *   `5xx`系: サーバー側の起因によるエラー。
-*   **具体的なエラーケースと対応**:
-    *   **リクエストバリデーションエラー (Pydantic)**: FastAPIが自動的に422 Unprocessable Entityを返しますが、これをカスタムハンドラで捕捉し、`ErrorCode.INVALID_REQUEST` と共に統一形式の `ErrorResponse` で400 Bad Requestとして返却します。
-    *   **ビジネスロジックエラー**:
-        *   ファイルタイプ不正: `ErrorCode.UNSUPPORTED_MEDIA_TYPE` (415)
-        *   ファイルサイズ超過: `ErrorCode.FILE_TOO_LARGE` (413)
-        *   LangGraphワークフローでの音声解析失敗: `ErrorCode.ANALYSIS_FAILED` (503)
-        *   LangGraphワークフローでのバッキングトラック生成失敗: `ErrorCode.GENERATION_FAILED` (503)
-    *   **外部サービス連携エラー**:
-        *   Gemini API呼び出しエラー (個々のタスク内、タイムアウト、APIキー不正、レート制限超過など): `ErrorCode.GEMINI_API_ERROR` (503). LangGraph内のノードで発生した場合、グラフ全体のエラーとして集約される。
-        *   Google Cloud Storage 操作エラー (アップロード/ダウンロード失敗): `ErrorCode.GCS_UPLOAD_ERROR` (503)
-    *   **認証・認可エラー** (将来的な拡張を見据え):
-        *   認証トークンなし・不正: `ErrorCode.AUTHENTICATION_REQUIRED` (401)
-        *   権限不足: `ErrorCode.FORBIDDEN_ACCESS` (403)
-    *   **レート制限超過エラー**: `ErrorCode.RATE_LIMIT_EXCEEDED` (429)
-    *   **予期せぬサーバーエラー**: `ErrorCode.INTERNAL_SERVER_ERROR` (500)。この場合、詳細なエラー情報はログに出力し、クライアントには汎用的なメッセージを返します。
+| 従来のアプローチ | 現在のアプローチ |
+|---|---|
+| 構造化パラメータ抽出 | テーマベース理解 |
+| キー・BPM・コード | 雰囲気・感情・スタイル |
+| 機械的データ | 人間的表現 |
+| MIDI直接生成 | MusicXML → MP3パイプライン |
 
 
-### 6.2. タイムアウト
-Gemini APIやその他の外部サービス呼び出しには、`httpx` などのHTTPクライアントライブラリの機能を利用して、適切なタイムアウト値（例: 30秒〜120秒、設定値で管理）を設定し、リクエストが長時間ハングアップするのを防ぎます。タイムアウト発生時は `ErrorCode.EXTERNAL_SERVICE_ERROR` またはより具体的なエラーコード (例: `ErrorCode.GEMINI_API_ERROR` の `detail` にタイムアウト情報を付加) を返却します。LangGraphの各ノード実行時にもタイムアウトを設定します。
+## 6. セキュリティと堅牢性（実装詳細）
 
+### 6.1. 多層防御アーキテクチャ
 
-### 6.3. リソース管理
-Cloud Runのインスタンス設定（メモリ、CPU）を、音声処理の負荷やGemini APIとの連携に必要なリソースを考慮して適切に設定します。特にファイル処理やAIモデルのレスポンスサイズによってはメモリ消費が増える可能性があるため、十分なマージンを確保します。
+SessionMUSEは本番運用を見据えた包括的なセキュリティ・堅牢性機能を実装しています。
 
+#### 主要ミドルウェア（main.py実装）:
+```python
+# 1. CORS設定 - フロントエンドアクセス制御
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 開発用: 本番では具体的ドメイン指定
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-### 6.4. ロギング
-標準の`logging`モジュールとGoogle Cloud Loggingを連携させ、以下の情報を構造化ログとして記録し、モニタリングとデバッグに役立てます。
- * リクエスト情報: (メソッド, パス, IPアドレス, User-Agent, リクエストID)
- * 認証情報: (呼び出し元サービスアカウントIDなど、個人情報は適切にマスク)
- * LangGraphワークフローの実行ID、各ノードの開始・終了、処理時間
- * 外部API呼び出し: (対象サービス, リクエストパラメータ（機密情報マスク）, レスポンスステータス, レイテンシ)
- * エラー情報: (エラーコード, メッセージ, スタックトレース)
- * 設定値でログレベル（DEBUG, INFO, WARNING, ERROR）を制御可能にします。
+# 2. 相関ID管理 - リクエスト追跡
+app.add_middleware(
+    CorrelationIdMiddleware,
+    header_name='X-Request-ID',
+    generator=lambda: uuid4().hex,
+)
+
+# 3. 包括的ログミドルウェア - 全リクエスト記録
+@app.middleware("http")
+async def log_requests_middleware(request: Request, call_next):
+    # 詳細なリクエスト/レスポンス情報をログに記録
+```
+
+### 6.2. 階層化例外ハンドリング
+
+#### カスタム例外クラス:
+```python
+# exceptions.py より
+class AppException(Exception):
+    """基底カスタム例外"""
+    def __init__(self, message: str, error_code: ErrorCode, status_code: int, detail: Optional[str] = None)
+
+class AnalysisFailedException(AppException):
+    """AI音声解析失敗"""
+    
+class GenerationFailedException(AppException):
+    """MusicXML生成失敗"""
+    
+class VertexAIAPIErrorException(AppException):
+    """Gemini API専用エラー"""
+    
+class AudioConversionException(AppException):
+    """音声変換失敗"""
+```
+
+#### 包括的例外ハンドラ（main.py）:
+```python
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request, exc):
+    # Pydanticバリデーションエラー → 400
+    
+@app.exception_handler(AppException)  
+async def app_exception_handler(request, exc):
+    # カスタム例外 → 適切なHTTPステータス
+    
+@app.exception_handler(Exception)
+async def generic_exception_handler(request, exc):
+    # 予期せぬエラー → 500
+```
+
+### 6.3. AI処理の安全性確保
+
+#### Vertex AI セーフティ設定:
+```python
+safety_settings = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+}
+```
+
+#### タイムアウト管理:
+- **Vertex AI API**: 120秒（設定可能）
+- **音声変換処理**: subprocess タイムアウト
+- **ファイルアップロード**: FastAPI標準タイムアウト
+
+### 6.4. ファイル処理セキュリティ
+
+#### 入力検証:
+```python
+SUPPORTED_AUDIO_MIME_TYPES = [
+    "audio/mpeg",   # MP3
+    "audio/wav",    # WAV  
+    "audio/x-wav",  # WAV
+    "audio/mp4",    # M4A
+    "audio/x-m4a",  # M4A
+    "audio/aac",    # AAC
+    "audio/webm",   # WebM
+]
+
+# ファイルサイズ制限
+MAX_FILE_SIZE_MB = 100  # 設定可能
+```
+
+#### 一時ファイル管理:
+```python
+with tempfile.TemporaryDirectory() as tmpdir:
+    # 音声変換処理
+    # 自動クリーンアップ
+```
+
+### 6.5. 構造化ロギング戦略
+
+#### ログ情報カテゴリ:
+```python
+# リクエスト追跡
+log_payload_request = {
+    "client_host": request.client.host,
+    "client_port": request.client.port, 
+    "http_method": request.method,
+    "http_path": request.url.path,
+    "user_agent": request.headers.get("user-agent"),
+    "gcp_trace_context": request.headers.get("X-Cloud-Trace-Context"),
+}
+
+# AIワークフロー追跡  
+extra_info = {
+    "workflow_run_id": state.get("workflow_run_id"),
+    "node_name": event_name,
+    "duration_seconds": round(duration, 2)
+}
+```
+
+### 6.6. GCS セキュリティ実装
+
+#### 認証・認可:
+```python
+# Google Cloud Storage クライアント
+self.client = storage.Client()  # デフォルト認証
+
+# バケット分離
+GCS_UPLOAD_BUCKET   # ユーザーアップロード
+GCS_TRACK_BUCKET    # 生成ファイル
+```
+
+#### ライフサイクル管理:
+- **自動削除**: 1日後（GCS_LIFECYCLE_DAYS設定）
+- **公開URL**: タイムアウトなし（パブリックバケット想定）
+
+### 6.7. 堅牢性の特徴
+
+1. **音声変換フォールバック**: WebM/AAC→WAV自動変換
+2. **ワークフロー状態管理**: LangGraphによる失敗時の適切な終了
+3. **部分的成功処理**: MP3生成失敗時でもMusicXMLは提供
+4. **レジリエンス**: 外部サービス障害時の適切なエラー応答
 
