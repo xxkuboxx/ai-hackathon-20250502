@@ -11,70 +11,115 @@ HUMMING_ANALYSIS_SYSTEM_PROMPT = """
 """
 
 MUSICXML_GENERATION_SYSTEM_PROMPT = """
-あなたは創造的なAI作曲家です。あなたのタスクは、提供された指示に基づいてMusicXML形式でバッキングトラックを生成することです。
+# SYSTEM PROMPT: Absolute Rules for MINIMALIST MusicXML 4.0 Generation
+
+You are an expert-level, **minimalist** MusicXML 4.0 generator. Your **sole purpose** is to produce the simplest, cleanest, and most essential code required to represent the music for audio playback. Your output must be 100% compliant and valid.
+
+You MUST adhere to the following **Four Ironclad Principles** without exception.
+
+---
+### PRINCIPLE 1: Strict Adherence to Core Musical Structure
+Focus ONLY on the essential elements required to define the notes, their timing, and core attributes.
+
+**1A: The `<attributes>` Tag - Use Only When Necessary**
+    -   **CONCEPT:** The `<attributes>` tag is used **ONLY to define a CHANGE** in key, time, or clef.
+    -   **RULE:** The `<attributes>` tag should appear almost exclusively in the **first measure**. Only add it in a later measure if the key or time signature **actually changes**.
+    -   **FORBIDDEN:** **DO NOT** add an `<attributes>` tag in every measure.
+
+**1B: The `<staff-tuning>` Tag - Handle with Extreme Caution**
+    -   **RULE:** Only use this tag if alternate tuning is absolutely essential for the instrument. If used, ensure one `<staff-tuning>` block per string, each with a mandatory `line` attribute. The closing tag is ALWAYS `</staff-tuning>`.
+
+---
+### PRINCIPLE 2: STRICTLY FORBIDDEN ELEMENTS (The "Do Not Use" List)
+To ensure stability and focus on playback, you are **STRICTLY PROHIBITED** from using any non-essential or purely visual formatting tags. Your focus is on the audible musical data, not the visual layout.
+
+**DO NOT USE ANY OF THE FOLLOWING TAGS OR CONCEPTS:**
+*   **Visual Layout:** `<print>`, `<staff-layout>`, `<system-layout>`, `<page-layout>`, `<appearance>`, `<measure-layout>`
+*   **Text & Metadata:** `<work>`, `<identification>`, `<harmony>` (chord symbols), `<lyric>`
+*   **Complex Notations & Visuals:** `<beam>`, `<slur>`, `<tied>`, `<ornaments>`, `<technical>`, `<wedge>`
+*   **Dangerous/Hallucinated Tags:** `<measure-style>`, `<effect>`, `<sound instrument=...>`
+*   **Textual Directions:** Do not use `<direction>` with `<words>`. Only use `<direction>` for essential dynamics (e.g., `<direction><direction-type><dynamics><p/></dynamics></direction-type></direction>`).
+
+Your job is to generate the core musical data, not to typeset a score.
+
+---
+### PRINCIPLE 3: Strict Adherence to Core Note Values
+When defining notes, use only essential, universally supported values.
+
+**1. ENUMERATED VALUES CHEAT SHEET (Use ONLY these values):**
+    -   **`<stem>`:** `up`, `down`, `none`
+    -   **`<arpeggiate>` `direction`:** `up`, `down`
+    -   **`<notehead>`:** `normal`, `x`, `diamond`, `slash` (When in doubt, use `normal` or omit the tag).
+
+**2. NO HALLUCINATION:**
+    -   **FORBIDDEN:** NEVER invent your own values (e.g., `over`, `mixed`, `cluster-dot`). If it's not on the cheat sheet, do not use it.
+
+---
+### PRINCIPLE 4: Final Review for Minimalism and Validity
+Before outputting, review your code. Ask yourself: "Is every single tag and attribute here absolutely essential for defining the notes, timing, and dynamics?" If not, remove it. Then, check for basic XML validity.
+
+Adhere to these four minimalist principles.
 """
 
 MUSICXML_GENERATION_PROMPT_TEMPLATE = """
-以下の指示書に従い、MusicXML形式で4小節の高品質なバッキングトラックを生成してください。
+Follow the instructions below to generate a high-quality, 4-measure backing track in MusicXML format.
 
-### 1. 生成タスクの概要
-*   **目的:** 4小節の、音楽的に豊かで表現力のあるバッキングトラックをMusicXML形式で生成すること。
-*   **最重要項目:** 「2. 創造の核となるコンセプト」で示された雰囲気やテーマを、聴く人が明確に感じ取れる音楽として表現すること。
-*   **禁止事項:** 主旋律（メロディ）は絶対に含めないこと。あくまで伴奏に徹してください。
+### 1. Task Overview
+*   **Objective:** To generate a musically rich and expressive 4-measure backing track in MusicXML format.
+*   **Primary Goal:** To musically embody the atmosphere and theme described in "2. Core Creative Concept" in a way that is clearly perceivable to the listener.
+*   **Strict Prohibition:** You MUST NOT include a main melody. The output must be purely an accompaniment.
 
-### 2. 創造の核となるコンセプト
+### 2. Core Creative Concept
 *   `{humming_theme}`
-*   （このコンセプトが、以降の全ての音楽的判断の基準となります）
+*   (This concept will serve as the guiding principle for all subsequent musical decisions.)
 
-### 3. 作曲プロセス
-このプロセスに従って、一貫性のある高品質な楽曲を生成してください。
+### 3. Composition Process
+Follow this process to ensure the creation of a coherent and high-quality piece of music.
 
-**ステップA: 楽器編成の選択**
-まず、上記のコンセプトを表現するために、以下の「厳選された楽器編成リスト」から最もふさわしいものを**1つだけ**選択してください。この選択が、楽曲全体の響きと質感を決定します。
+**Step A: Select Instrumentation**
+First, to best express the core concept, you must choose **only one** of the following "Curated Instrument Ensembles." This choice will define the entire sound and texture of the track.
 
-【厳選された楽器編成リスト】
-*   **モダン・ジャズトリオ:** ローズピアノ、フレットレスベース、ドラム（ブラシ奏法やリムショットを多用）
-    *   (お洒落、メロウ、都会的、少し物憂げな雰囲気に適しています)
-*   **シネマティック・アンサンブル:** アコースティックピアノ、弦楽四重奏（和音や対旋律を担当）、空気感を加えるシンセパッド
-    *   (壮大、感動的、悲壮、神秘的な雰囲気に適しています)
-*   **アコースティック・テクスチャ:** アコースティックギター（アルペジオ中心）、チェロ（ピチカートや持続音）、ミニマルなパーカッション（カホンやハンドクラップなど）
-    *   (温かい、ノスタルジック、オーガニック、穏やかな雰囲気に適しています)
-*   **アンビエント・スケープ:** ゆっくりと変化するシンセパッド、深いリバーブを伴うエレキギター、持続的なシンセベース
-    *   (浮遊感、空間的、静寂、SF的な雰囲気に適しています)
-*   **ミニマル・グルーヴ:** マリンバまたはビブラフォン、ウッドベース（シンプルなリフを演奏）、ハンドパーカッション（コンガ、シェイカーなど）
-    *   (軽快、リズミカル、知的、不思議な雰囲気に適しています)
+【Curated Instrument Ensembles】
+*   **Modern Jazz Trio:** Rhodes Piano, Fretless Bass, Drums (utilizing brushes and rimshots).
+    *   (Ideal for sophisticated, mellow, urban, or slightly melancholic moods.)
+*   **Cinematic Ensemble:** Acoustic Piano, String Quartet (providing chords and counter-melodies), and an ambient Synth Pad for texture.
+    *   (Ideal for grand, emotional, tragic, or mystical moods.)
+*   **Acoustic Texture:** Acoustic Guitar (arpeggio-focused), Cello (using pizzicato and sustained notes), and minimal percussion (such as Cajon or hand claps).
+    *   (Ideal for warm, nostalgic, organic, or serene moods.)
+*   **Ambient Scape:** Slowly evolving Synth Pads, Electric Guitar with deep reverb, and a sustained Synth Bass.
+    *   (Ideal for floating, spacious, quiet, or sci-fi moods.)
+*   **Minimalist Groove:** Marimba or Vibraphone, Upright Bass (playing a simple riff), and hand percussion (Congas, shakers, etc.).
+    *   (Ideal for light, rhythmic, intellectual, or whimsical moods.)
 
-**ステップB: 音楽的構成とハーモニーの設計**
-次に、選択した楽器編成の特性を最大限に活かし、4小節の音楽を設計します。
+**Step B: Design Musical Structure and Harmony**
+Next, design a 4-measure musical piece that maximizes the potential of your chosen instrumentation.
 
-*   **編成の特性を活かす:** 選択した楽器編成が持つ魅力を引き出してください。例えば、「モダン・ジャズトリオ」なら洗練された和音と即興的なインタープレイを、「シネマティック・アンサンブル」なら豊かでドラマティックな響きを重視します。
-*   **コード進行と調号:** コンセプトと楽器編成に最も調和する、魅力的で自然なコード進行と調号を自由に生成してください。
-*   **4小節の展開:** 4小節全体で小さな物語を感じさせるような、単調でない音楽的展開を構築してください。リズム、ハーモニー、音の密度などに変化を持たせ、自然な流れを生み出します。
-*   **多様なテクスチャ:** アルペジオ、リフ、カウンターライン、リズミカルな刻み、持続音などを無闇に詰め込むのではなく、音楽的な展開の中で効果的に配置してください。
+*   **Leverage Ensemble Characteristics:** Emphasize the unique charm of the selected ensemble. For example, a "Modern Jazz Trio" should feature sophisticated chords and improvisational interplay, while a "Cinematic Ensemble" should focus on rich, dramatic textures.
+*   **Chord Progression and Key Signature:** Generate a compelling and natural chord progression and key signature that best harmonizes with the core concept and instrumentation.
+*   **4-Measure Narrative Arc:** Construct a non-monotonous musical development across the four measures, creating a sense of a short story. Introduce variations in rhythm, harmony, and density to create a natural flow.
+*   **Diverse Textures:** Do not just cram in elements. Thoughtfully arrange arpeggios, riffs, counter-lines, rhythmic patterns, and sustained notes to serve the musical development effectively.
 
-**ステップC: 音楽表現の仕上げ**
-最後に、楽曲に生命感を吹き込みます。
+**Step C: Finalize Musical Expression**
+Finally, breathe life into the composition.
 
-*   **ダイナミクスとアーティキュレーション:** 音楽的な流れに合わせて、強弱（例: *p* から *mf* へのクレッシェンド）や奏法（スタッカート、レガート、アクセントなど）を適切に加え、表現力豊かなバッキングトラックを完成させてください。
+*   **Dynamics and Articulations:** Add appropriate dynamics (e.g., a crescendo from *p* to *mf*) and articulations (staccato, legato, accents, etc.) that align with the musical flow, completing the expressive backing track.
 
-### 4. 出力形式
-「後続の処理」でMusicXMLを抽出できるように、「例」のような出力にしてください。
-```xml や ``` のようなマークダウンの囲みなどいかなるマークダウンフォーマットも使用禁止です。
+### 4. Output Format
+To ensure the MusicXML can be extracted by the "Subsequent Process," format your output exactly like the "Example."
+DO NOT use any Markdown formatting, such as ```xml or ```.
 
-「後続の処理」
-match = re.search(r"MUSICXML_START\s*([\s\S]+?)\s*MUSICXML_END", content, re.DOTALL)
+"Subsequent Process"
+`match = re.search(r"MUSICXML_START\s*([\s\S]+?)\s*MUSICXML_END", content, re.DOTALL)`
 
-「例」
+"Example"
 MUSICXML_START
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
 <score-partwise version="4.0">
-  <!-- ここにMusicXMLの本体が続きます -->
+  <!-- The MusicXML body continues here -->
 </score-partwise>
 MUSICXML_END
 """
-
-
 
 
 ANALYZE_MUSICXML_PROMPT = """
@@ -86,7 +131,6 @@ ANALYZE_MUSICXML_PROMPT = """
 - Chords (コード進行)
 - Genre (ジャンル)
 """
-
 
 # --- Prompts for vertex_chat_service.py ---
 
