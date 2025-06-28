@@ -131,18 +131,78 @@ Session MUSEのシームレスな体験は、Google Cloudのサービス群を�
 
 この設計は、単にGoogle Cloudのサービスを使ったというだけでなく、クラウドネイティブの原則に則って、パフォーマンス、スケーラビリティ、メンテナンス性を高いレベルで満たすことを目指した結果です。
 
-### アーキテクチャ図
+### システムアーキテクチャ図
 
-### システム構成概要
+Session MUSEは、Google Cloudのサービス群を組み合わせたイベント駆動型アーキテクチャで構成されています。
 
-**フロントエンド → ストレージ → AI解析 → バックエンド処理 → 結果返却**
+```mermaid
+flowchart TD
+    %% ユーザー層
+    A[🎤 ユーザー<br/>鼻歌録音] 
+    
+    %% フロントエンド層
+    B[🌐 Next.js Frontend<br/>Webアプリケーション]
+    
+    %% Google Cloud Storage層
+    C[📁 Cloud Storage<br/>音声ファイル保存]
+    
+    %% イベント処理層  
+    D[⚡ Eventarc<br/>ファイルアップロード検知]
+    
+    %% コンピュート層
+    E[🔧 Cloud Run<br/>Python + FastAPI<br/>サーバーレス処理]
+    
+    %% AI処理層
+    F[🤖 Gemini 1.5 Pro<br/>マルチモーダル音声解析]
+    
+    %% 音楽生成層
+    G[🎵 MIDI Engine<br/>バッキングトラック生成]
+    
+    %% 出力層
+    H[🎧 音楽ファイル<br/>MP3 + MIDI]
+    
+    %% チャット機能
+    I[💬 AI Chat<br/>音楽相談・アドバイス]
 
-1. **ユーザーインターフェース**: Next.jsによるモダンなWebアプリケーション
-2. **ファイル管理**: Cloud Storageによる音声ファイルの安全な保管
-3. **イベント駆動**: Eventarcによる自動的な処理トリガー
-4. **AI解析**: Gemini 1.5 Proによる音声の直接解析
-5. **バックエンド**: Cloud Run上のPython + FastAPIによる高速処理
-6. **音楽生成**: MIDIエンジンによるバッキングトラックの自動作成
+    %% データフロー
+    A -->|1. 音声アップロード| B
+    B -->|2. ファイル保存| C
+    C -->|3. イベント発生| D
+    D -->|4. サービス起動| E
+    E -->|5. 音声解析要求| F
+    F -->|6. 楽曲情報<br/>(キー・BPM・コード)| E
+    E -->|7. MIDI生成指示| G
+    G -->|8. バッキングトラック| E
+    E -->|9. 音楽ファイル生成| H
+    H -->|10. ダウンロード・試聴| B
+    B -->|11. ユーザーに配信| A
+    
+    %% チャット機能のフロー
+    A <-->|音楽相談| I
+    I <-->|LangChain| F
+    
+    %% スタイリング（Google Cloudカラー）
+    style C fill:#ea4335,stroke:#333,stroke-width:2px,color:#fff
+    style D fill:#34a853,stroke:#333,stroke-width:2px,color:#fff  
+    style E fill:#0f9d58,stroke:#333,stroke-width:2px,color:#fff
+    style F fill:#4285f4,stroke:#333,stroke-width:2px,color:#fff
+    style G fill:#ff6d01,stroke:#333,stroke-width:2px,color:#fff
+    style I fill:#9c27b0,stroke:#333,stroke-width:2px,color:#fff
+```
+
+### 技術的特徴とGoogle Cloud活用
+
+**🔸 イベント駆動型アーキテクチャ**
+- **Cloud Storage** + **Eventarc**: ファイルアップロードを自動検知し、処理を開始
+- **疎結合設計**: フロントエンドは重い処理を待つ必要がなく、常に軽快
+
+**🔸 サーバーレス & スケーラブル**  
+- **Cloud Run**: トラフィックに応じた自動スケーリング（スケールトゥゼロ対応）
+- **コスト効率**: 使用した分だけの従量課金
+
+**🔸 AI-First設計**
+- **Gemini 1.5 Pro**: 音声ファイルを直接理解するマルチモーダル処理
+- **LangChain**: AI対話の効率的な制御と管理
 
 ## ⅲ. デモンストレーション：Session MUSEが動く様子
 
