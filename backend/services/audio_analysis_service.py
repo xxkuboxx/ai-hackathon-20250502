@@ -263,14 +263,7 @@ class AudioAnalyzer:
         prompt_text = prompts.MUSICXML_GENERATION_PROMPT_TEMPLATE.format(humming_theme=humming_theme)
         messages = [
             SystemMessage(content=prompts.MUSICXML_GENERATION_SYSTEM_PROMPT),
-            HumanMessage(content=[
-                prompt_text, # テキストパート
-                { # 音声ファイルパート
-                    "type": "media",
-                    "file_uri": gcs_file_path,
-                    "mime_type": mime_type,
-                }
-            ])
+            HumanMessage(content=prompt_text)
         ]
         try:
             response_ai_message: AIMessage = await self._call_vertex_api(
