@@ -17,6 +17,7 @@ from models import MusicAnalysisFeatures, ErrorCode
 from exceptions import AnalysisFailedException, GenerationFailedException, VertexAIAPIErrorException
 from config import settings
 from services import prompts
+from services.correct_musicxml import correct_common_musicxml_errors
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +282,10 @@ class AudioAnalyzer:
                 if not (musicxml_text.startswith("<?xml") and musicxml_text.endswith("</score-partwise>")):
                     logger.warning(f"[{task}] 生成されたMusicXMLが期待される形式と異なる可能性があります: {musicxml_text[:100]}...{musicxml_text[-100:]}")
                 logger.info(f"MusicXML生成成功。データ長: {len(musicxml_text)}")
+                correct_musicxml_text = correct_common_musicxml_errors(musicxml_text)
+                if len(correct_musicxml_text) != len(musicxml_text):
+                    logger.info(f"MusicXML修正。データ長: {len(correct_musicxml_text)}")
+                    musicxml_text = correct_musicxml_text
                 return musicxml_text
             if "CANNOT_GENERATE_MUSICXML" in content.upper(): # AIが明示的に生成不可と伝えた場合
                  logger.warning(f"[{task}] Vertex AI がMusicXMLデータを生成できないと報告しました。応答: {content[:200]}")
