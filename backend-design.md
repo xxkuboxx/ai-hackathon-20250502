@@ -5,6 +5,119 @@
 
 ## 2. アーキテクチャ概要と設計方針
 
+### 2.0. システムアーキテクチャ概要
+
+SessionMUSE バックエンドの全体アーキテクチャとコンポーネント間の関係を示します。
+
+```mermaid
+flowchart TB
+    subgraph "Client Layer"
+        Flutter["📱 Flutter App"]
+        WebBrowser["🌐 Web Browser"]
+    end
+    
+    subgraph "SessionMUSE Backend (FastAPI + Cloud Run)"
+        direction TB
+        
+        subgraph "API Layer"
+            FastAPI["🚀 FastAPI Framework"]
+            HealthCheck["/health エンドポイント"]
+            ProcessAPI["/api/process 音声処理API"]
+            ChatAPI["/api/chat AIチャットAPI"]
+        end
+        
+        subgraph "Service Layer"
+            direction LR
+            
+            subgraph "Audio Processing"
+                AudioConversion["🎧 audio_conversion_service.py\n音声フォーマット変換"]
+                AudioAnalysis["🎵 audio_analysis_service.py\nLangGraphワークフロー"]
+                AudioSynthesis["🎼 audio_synthesis_service.py\nMIDI→MP3変換"]
+            end
+            
+            subgraph "AI Services"
+                VertexChat["🤖 vertex_chat_service.py\nGeminiチャット"]
+                Prompts["📝 prompts.py\nAIプロンプト管理"]
+            end
+            
+            GCSService["📁 gcs_service.py\nファイルストレージ"]
+        end
+        
+        subgraph "Configuration"
+            Config["⚙️ config.py\npydantic-settings"]
+            LoggingConfig["📊 logging_config.py\n構造化ログ"]
+            Exceptions["⚠️ exceptions.py\nカスタム例外"]
+        end
+    end
+    
+    subgraph "External Services"
+        direction TB
+        
+        subgraph "Google Cloud Platform"
+            VertexAI["🧠 Vertex AI\nGemini 2.5 Flash Lite"]
+            GCS["📁 Cloud Storage\nバケット(uploads/tracks)"]
+        end
+        
+        subgraph "Audio Processing Tools"
+            FluidSynth["🎹 FluidSynth\nMIDI→WAV変換"]
+            FFmpeg["🎥 FFmpeg\n音声コーデック"]
+            SoundFont["🎶 GeneralUser GS\nSoundFont"]
+        end
+    end
+    
+    %% Client to API
+    Flutter -.->|"📲 HTTP/HTTPS\nマルチパートリクエスト"| FastAPI
+    WebBrowser -.->|"🌐 HTTP/HTTPS\nJSONリクエスト"| FastAPI
+    
+    %% API Routing
+    FastAPI --> ProcessAPI
+    FastAPI --> ChatAPI
+    FastAPI --> HealthCheck
+    
+    %% Service Dependencies
+    ProcessAPI --> AudioConversion
+    ProcessAPI --> AudioAnalysis
+    ProcessAPI --> AudioSynthesis
+    ProcessAPI --> GCSService
+    
+    ChatAPI --> VertexChat
+    ChatAPI --> Prompts
+    
+    %% LangGraph Workflow
+    AudioAnalysis -.->|"🔍 音声解析"| VertexAI
+    AudioAnalysis -.->|"🎼 MusicXML生成"| VertexAI
+    AudioAnalysis --> GCSService
+    
+    %% Audio Processing Pipeline
+    AudioConversion -.->|"🔄 フォーマット変換"| FFmpeg
+    AudioSynthesis -.->|"🎹 MIDIシンセサイザ"| FluidSynth
+    AudioSynthesis -.->|"🎶 サウンドフォント"| SoundFont
+    AudioSynthesis -.->|"🎥 MP3変換"| FFmpeg
+    
+    %% Storage Operations
+    GCSService -.->|"📂 ファイル操作"| GCS
+    
+    %% AI Chat
+    VertexChat -.->|"💬 チャットAPI"| VertexAI
+    
+    %% Configuration
+    Config -.-> AudioAnalysis
+    Config -.-> VertexChat
+    Config -.-> GCSService
+    LoggingConfig -.-> FastAPI
+    Exceptions -.-> FastAPI
+    
+    classDef apiStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef serviceStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef aiStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef storageStyle fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    
+    class FastAPI,ProcessAPI,ChatAPI,HealthCheck apiStyle
+    class AudioConversion,AudioAnalysis,AudioSynthesis,GCSService serviceStyle
+    class VertexAI,VertexChat,Prompts aiStyle
+    class GCS,FluidSynth,FFmpeg,SoundFont storageStyle
+```
+
 ### 2.1. 核心的設計思想
 SessionMUSE は「音楽的テーマ理解」を中心とした AI 音楽パートナーとして設計されています。従来の音楽パラメータ（キー、BPM、コード進行）の構造化抽出から、より人間的で直感的な「トラックの雰囲気/テーマ」理解へとアプローチを進化させています。
 
@@ -88,6 +201,145 @@ class Settings(BaseSettings):
 
 ## 4. APIエンドポイント詳細（現在の実装）
 
+### 4.0. APIエンドポイント全体構成
+
+FastAPIフレームワークによるRESTful API設計と各エンドポイントの関係を示します。
+
+```mermaid
+flowchart TD
+    subgraph "SessionMUSE FastAPI Backend"
+        direction TB
+        
+        subgraph "Main Application (main.py)"
+            App["🚀 FastAPI App\nCORS + Middleware"]
+            
+            subgraph "Health Check"
+                Health["/health\nGET"]
+                HealthCheck["❤️ システム状態確認"]
+            end
+        end
+        
+        subgraph "Audio Processing Router (process_api.py)"
+            direction TB
+            
+            ProcessEndpoint["/api/process\nPOST"]
+            
+            subgraph "Request Processing"
+                FileValidation["📎 ファイルバリデーション\n(MIME/サイズ)"]
+                AudioConversion["🔄 音声変換\n(WebM/AAC→WAV)"]
+                GCSUpload["📁 GCSアップロード"]
+            end
+            
+            subgraph "AI Workflow Execution"
+                WorkflowLaunch["🎆 LangGraphワークフロー開始"]
+                AudioAnalysis["🎧 音声解析\n(Geminiマルチモーダル)"]
+                MusicXMLGen["🎼 MusicXML生成"]
+                AudioSynthesis["🎹 MIDI→MP3変換"]
+            end
+            
+            ResponseFormat["📦 レスポンスフォーマット\n{analysis, URLs}"]
+        end
+        
+        subgraph "Chat Router (chat_api.py)"
+            direction TB
+            
+            ChatEndpoint["/api/chat\nPOST"]
+            
+            subgraph "Chat Processing"
+                MessageValidation["📝 メッセージバリデーション"]
+                ContextRetrieval["🔍 コンテキスト取得\n(MusicXML GCSダウンロード)"]
+                PromptConstruction["📝 プロンプト構築"]
+                AIChat["🤖 GeminiチャットAPI"]
+            end
+            
+            StreamingResponse["🔄 ストリーミングレスポンス\n(Server-Sent Events)"]
+        end
+        
+        subgraph "Error Handling & Middleware"
+            CustomExceptions["⚠️ Custom Exceptions\n(FILE_TOO_LARGE, ANALYSIS_FAILED...)"]
+            CORSMiddleware["🌐 CORSミドルウェア"]
+            LoggingMiddleware["📊 ログミドルウェア"]
+        end
+    end
+    
+    subgraph "External Dependencies"
+        
+        subgraph "Services"
+            AudioConversionService["🎧 audio_conversion_service"]
+            AudioAnalysisService["🎵 audio_analysis_service"]
+            AudioSynthesisService["🎼 audio_synthesis_service"]
+            VertexChatService["🤖 vertex_chat_service"]
+            GCSService["📁 gcs_service"]
+        end
+        
+        subgraph "Google Cloud"
+            VertexAI["🧠 Vertex AI\nGemini 2.5 Flash Lite"]
+            CloudStorage["📁 Cloud Storage"]
+        end
+        
+        subgraph "Audio Tools"
+            FluidSynth["🎹 FluidSynth"]
+            FFmpeg["🎥 FFmpeg"]
+        end
+    end
+    
+    %% Main App Flow
+    App --> Health
+    App --> ProcessEndpoint
+    App --> ChatEndpoint
+    
+    Health --> HealthCheck
+    
+    %% Process API Flow
+    ProcessEndpoint --> FileValidation
+    FileValidation --> AudioConversion
+    AudioConversion --> GCSUpload
+    GCSUpload --> WorkflowLaunch
+    
+    WorkflowLaunch --> AudioAnalysis
+    AudioAnalysis --> MusicXMLGen
+    MusicXMLGen --> AudioSynthesis
+    AudioSynthesis --> ResponseFormat
+    
+    %% Chat API Flow  
+    ChatEndpoint --> MessageValidation
+    MessageValidation --> ContextRetrieval
+    ContextRetrieval --> PromptConstruction
+    PromptConstruction --> AIChat
+    AIChat --> StreamingResponse
+    
+    %% Service Dependencies
+    AudioConversion -.-> AudioConversionService
+    AudioAnalysis -.-> AudioAnalysisService
+    AudioSynthesis -.-> AudioSynthesisService
+    AIChat -.-> VertexChatService
+    GCSUpload -.-> GCSService
+    ContextRetrieval -.-> GCSService
+    
+    %% External Service Connections
+    AudioAnalysisService -.-> VertexAI
+    VertexChatService -.-> VertexAI
+    GCSService -.-> CloudStorage
+    AudioConversionService -.-> FFmpeg
+    AudioSynthesisService -.-> FluidSynth
+    AudioSynthesisService -.-> FFmpeg
+    
+    %% Error Handling
+    App -.-> CustomExceptions
+    App -.-> CORSMiddleware
+    App -.-> LoggingMiddleware
+    
+    classDef apiStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef serviceStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef aiStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef toolStyle fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    
+    class App,ProcessEndpoint,ChatEndpoint,Health apiStyle
+    class AudioConversionService,AudioAnalysisService,AudioSynthesisService,GCSService serviceStyle
+    class VertexAI,VertexChatService,AIChat aiStyle
+    class FluidSynth,FFmpeg,CloudStorage toolStyle
+```
+
 ### 4.1. 音声処理API（テーマベース + MusicXML生成）
 **エンドポイント**: `POST /api/process`
 
@@ -126,6 +378,86 @@ file: <音声ファイル>
    ```
 
 3. **LangGraphによるAIワークフロー実行**
+
+   ワークフローエンジンは状態管理、エラーハンドリング、非同期処理を統合管理します。
+
+```mermaid
+flowchart TD
+    subgraph "LangGraph Audio Analysis Workflow"
+        direction TB
+        
+        Start(["Workflow Start"]) 
+        State[["💾 AudioAnalysisWorkflowState\n- gcs_file_path\n- workflow_run_id\n- humming_analysis_theme\n- generated_musicxml_data\n- final_analysis_result"]]
+        
+        subgraph "Node 1: Audio Theme Analysis"
+            AnalyzeStart["🎧 node_analyze_humming_audio"]
+            LoadFile["📁 GCSから音声ファイル読み込み"]
+            GeminiAnalyze["🤖 Gemini 2.5 Flash Lite\n音声マルチモーダル解析"]
+            ExtractTheme["🎵 テーマ抽出\n(例: '明るくエネルギッシュなJ-POP風')"]
+        end
+        
+        subgraph "Node 2: MusicXML Generation"
+            GenerateStart["🎼 node_generate_musicxml"]
+            ContextPrompt["📝 コンテキストプロンプト生成"]
+            GeminiGenerate["🤖 Gemini MusicXML生成"]
+            ValidateXML["✔️ MusicXMLバリデーション"]
+        end
+        
+        subgraph "Error Handling Nodes"
+            HandleAnalysisError["⚠️ node_handle_analysis_error"]
+            HandleGenerationError["⚠️ node_handle_generation_error"]
+            LogError["📊 エラーログ出力"]
+            SetErrorState["🚨 エラー状態設定"]
+        end
+        
+        Conditional{{"🔄 should_proceed_to_generation"}}
+        GenerationConditional{{"🔄 is_generation_successful"}}
+        
+        Success(["Workflow Success"])
+        Failure(["Workflow Failure"])
+        
+        %% Main Flow
+        Start --> State
+        State --> AnalyzeStart
+        
+        AnalyzeStart --> LoadFile
+        LoadFile --> GeminiAnalyze
+        GeminiAnalyze --> ExtractTheme
+        ExtractTheme --> Conditional
+        
+        Conditional -->|"continue"| GenerateStart
+        Conditional -->|"error"| HandleAnalysisError
+        
+        GenerateStart --> ContextPrompt
+        ContextPrompt --> GeminiGenerate
+        GeminiGenerate --> ValidateXML
+        ValidateXML --> GenerationConditional
+        
+        GenerationConditional -->|"success"| Success
+        GenerationConditional -->|"error"| HandleGenerationError
+        
+        %% Error Handling
+        HandleAnalysisError --> LogError
+        HandleGenerationError --> LogError
+        LogError --> SetErrorState
+        SetErrorState --> Failure
+        
+        %% State Updates
+        ExtractTheme -.->|"状態更新"| State
+        ValidateXML -.->|"状態更新"| State
+    end
+    
+    classDef nodeStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef aiStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef errorStyle fill:#ffebee,stroke:#d32f2f,stroke-width:2px
+    classDef stateStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    
+    class AnalyzeStart,GenerateStart nodeStyle
+    class GeminiAnalyze,GeminiGenerate aiStyle
+    class HandleAnalysisError,HandleGenerationError,LogError,SetErrorState errorStyle
+    class State,Conditional,GenerationConditional stateStyle
+```
+
    ```python
    # AudioAnalysisWorkflowState の管理
    workflow_state = await run_audio_analysis_workflow(gcs_file_path)
@@ -153,6 +485,84 @@ file: <音声ファイル>
    ```
 
 6. **音楽合成パイプライン**
+
+   AIが生成したMusicXMLから高品質MP3ファイルを生成するパイプラインを示します。
+
+```mermaid
+flowchart LR
+    subgraph "Audio Synthesis Pipeline (audio_synthesis_service.py)"
+        direction TB
+        
+        MusicXML["🎼 MusicXMLデータ\n(Gemini生成)"]
+        
+        subgraph "MIDI Conversion"
+            Music21["🎵 music21ライブラリ"]
+            MIDIGeneration["🎹 MIDIファイル生成"]
+            TempMIDI["📁 一時MIDIファイル\n/tmp/{uuid}.mid"]
+        end
+        
+        subgraph "FluidSynth Synthesis"
+            FluidSynth["🎶 FluidSynth"]
+            SoundFont["🎵 GeneralUser GS v1.472.sf2\nSoundFont"]
+            WAVGeneration["🎧 WAV音声合成"]
+            TempWAV["📁 一時WAVファイル\n/tmp/{uuid}.wav"]
+        end
+        
+        subgraph "MP3 Compression"
+            FFmpeg["🎥 FFmpeg"]
+            MP3Encoding["🎵 MP3エンコード"]
+            QualitySettings["⚙️ 品質設定\n192kbps, 44.1kHz"]
+            FinalMP3["🎧 最終MP3ファイル"]
+        end
+        
+        subgraph "GCS Upload"
+            GCSService["📁 GCS Service"]
+            UploadMP3["☁️ GCSアップロード"]
+            PublicURL["🌐 公開アクセスURL"]
+        end
+        
+        subgraph "Cleanup"
+            TempCleanup["🗑️ 一時ファイル削除"]
+        end
+    end
+    
+    %% Main Flow
+    MusicXML --> Music21
+    Music21 --> MIDIGeneration
+    MIDIGeneration --> TempMIDI
+    
+    TempMIDI --> FluidSynth
+    FluidSynth --> SoundFont
+    SoundFont --> WAVGeneration
+    WAVGeneration --> TempWAV
+    
+    TempWAV --> FFmpeg
+    FFmpeg --> MP3Encoding
+    MP3Encoding --> QualitySettings
+    QualitySettings --> FinalMP3
+    
+    FinalMP3 --> GCSService
+    GCSService --> UploadMP3
+    UploadMP3 --> PublicURL
+    
+    PublicURL --> TempCleanup
+    
+    %% Error Handling
+    Music21 -.->|"エラー"| TempCleanup
+    FluidSynth -.->|"エラー"| TempCleanup
+    FFmpeg -.->|"エラー"| TempCleanup
+    
+    classDef inputStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef processStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef outputStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef toolStyle fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    
+    class MusicXML inputStyle
+    class Music21,FFmpeg,GCSService processStyle
+    class FinalMP3,PublicURL outputStyle
+    class FluidSynth,SoundFont toolStyle
+```
+
    ```python
    # MusicXML → MIDI → WAV → MP3
    mp3_data = await audio_synthesis_service.synthesize_musicxml_to_mp3(
@@ -248,6 +658,96 @@ file: <音声ファイル>
 ## 5. データモデル（現在の実装版）
 
 SessionMUSE の現在のデータモデルは、テーマベースの音楽理解とMusicXML生成ワークフローに特化した設計となっています。
+
+### 5.0. データモデル関係図
+
+Pydanticモデルとデータフローの関係を示します。
+
+```mermaid
+classDiagram
+    class ErrorCode {
+        <<enumeration>>
+        +INVALID_REQUEST
+        +FILE_TOO_LARGE
+        +UNSUPPORTED_MEDIA_TYPE
+        +ANALYSIS_FAILED
+        +GENERATION_FAILED
+        +VERTEX_AI_API_ERROR
+        +AUDIO_CONVERSION_EXCEPTION
+    }
+    
+    class SessionMUSEHTTPException {
+        +error_code: ErrorCode
+        +message: str
+        +details: Dict[str, Any]
+        +status_code: int
+        +headers: Dict[str, str]
+    }
+    
+    class AudioAnalysisWorkflowState {
+        +gcs_file_path: str
+        +workflow_run_id: Optional[str]
+        +humming_analysis_theme: Optional[str]
+        +generated_musicxml_data: Optional[str]
+        +final_analysis_result: Optional[AnalysisResult]
+    }
+    
+    class AnalysisResult {
+        +humming_theme: str
+        +supporting_analysis: Optional[str]
+    }
+    
+    class ProcessResponseData {
+        +analysis: AnalysisResult
+        +original_file_url: str
+        +backing_track_url: str
+        +generated_mp3_url: str
+    }
+    
+    class ChatRequest {
+        +messages: List[ChatMessage]
+        +musicxml_gcs_url: Optional[str]
+        +analysis_context: Optional[AnalysisResult]
+    }
+    
+    class ChatMessage {
+        +role: str
+        +content: str
+    }
+    
+    class ChatResponse {
+        +role: str
+        +content: str
+    }
+    
+    class HealthCheckResponse {
+        +status: str
+        +timestamp: str
+        +version: str
+        +environment: str
+    }
+    
+    %% Relationships
+    SessionMUSEHTTPException --> ErrorCode : uses
+    AudioAnalysisWorkflowState --> AnalysisResult : contains
+    ProcessResponseData --> AnalysisResult : contains
+    ChatRequest --> ChatMessage : contains
+    ChatRequest --> AnalysisResult : references
+    
+    %% Data Flow Relationships
+    AudioAnalysisWorkflowState -.-> ProcessResponseData : generates
+    ChatRequest -.-> ChatResponse : produces
+    
+    classDef errorClass fill:#ffebee,stroke:#d32f2f,stroke-width:2px
+    classDef workflowClass fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef apiClass fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef dataClass fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    
+    class ErrorCode,SessionMUSEHTTPException errorClass
+    class AudioAnalysisWorkflowState workflowClass
+    class ProcessResponseData,ChatRequest,ChatResponse,HealthCheckResponse apiClass
+    class AnalysisResult,ChatMessage dataClass
+```
 
 ### 5.1. エラー管理モデル
 ```python

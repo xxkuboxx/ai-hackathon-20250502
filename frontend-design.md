@@ -35,49 +35,190 @@ Flutter プロジェクトの標準的な構成に準拠し、責務に応じて
 
 
 ## 4. 画面・コンポーネント設計
-### 4.1. 画面レイアウト（ワイヤーフレーム）
+### 4.1. 画面レイアウト構成
 画面は説明セクション、メイン機能部分、および全画面オーバーレイのチャットエリアで構成されます。
+
+```mermaid
+flowchart TD
+    subgraph "SessionMUSE UI Layout"
+        direction TB
+        
+        subgraph Header["AppBar"]
+            AppTitle["🎵 SessionMUSE - Your AI Music Partner"]
+            AIStatus["🟢 AI online"]
+        end
+        
+        subgraph MainContent["メインコンテンツエリア"]
+            direction TB
+            
+            subgraph ExplanationSection["説明セクション"]
+                Tagline["🎵 もう、曲作りで孤独じゃない"]
+                ProblemFlow["問題提示フロー"]
+                SolutionFlow["解決方法フロー"]
+            end
+            
+            subgraph RecordingSection["録音セクション"]
+                RecordTitle["🎵 録音"]
+                RecordButton["🎙️ 録音開始/停止"]
+                WaveformDisplay["リアルタイム波形表示"]
+            end
+            
+            subgraph AnalysisSection["解析結果セクション"]
+                AnalysisTitle["📊 AIによる解析結果"]
+                LoadingState["ローディング状態"]
+                ResultChips["結果チップ表示"]
+                subgraph AnalysisResults["解析結果"]
+                    Key["Key: C Major"]
+                    BPM["BPM: 120"]
+                    Chords["Chords: C|G|Am|F"]
+                    Genre["Genre: Rock"]
+                end
+            end
+            
+            subgraph BackingTrackSection["バッキングトラックセクション"]
+                TrackTitle["🎧 AIにより自動で生成された伴奏"]
+                PlayButton["▶️ Play"]
+                StopButton["⏹️ Stop"]
+                DownloadButton["⬇️ Download"]
+            end
+        end
+        
+        FAB["🤖 AIと相談\n(FloatingActionButton)"]
+        
+        subgraph ChatOverlay["チャットオーバーレイ (全画面)"]
+            direction TB
+            ChatHeader["✕ 🤖 AI チャット"]
+            ChatMessages["メッセージ履歴表示"]
+            ChatInput["メッセージ入力エリア"]
+            SendButton["送信ボタン"]
+        end
+    end
+    
+    %% レイアウト関係
+    Header -.-> MainContent
+    MainContent -.-> FAB
+    FAB -.->|タップで表示| ChatOverlay
+    
+    %% コンポーネント内関係
+    ProblemFlow --> SolutionFlow
+    RecordButton --> WaveformDisplay
+    LoadingState --> ResultChips
+    ResultChips --> AnalysisResults
+    ChatMessages --> ChatInput
+    ChatInput --> SendButton
+    
+    classDef sectionStyle fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef buttonStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
+    classDef overlayStyle fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    
+    class ExplanationSection,RecordingSection,AnalysisSection,BackingTrackSection sectionStyle
+    class RecordButton,PlayButton,StopButton,DownloadButton,SendButton,FAB buttonStyle
+    class ChatOverlay overlayStyle
 ```
-+------------------------------------------------------+
-| SessionMUSE - Your AI Music Partner [🟢 AI online]   |  (AppBar)
-+------------------------------------------------------+
-|                                                      |
-| [アプリ説明・価値提案セクション]                      |  <ExplanationSection>
-| 🎵 もう、曲作りで孤独じゃない                        |
-| [問題提示フロー] → [解決方法フロー]                   |
-| +--------------------------------------------------+ |
-| |                                                  | |
-| | 🎵 録音                                          | |
-| | [ 🎙️ ] 録音開始/停止                           | |  <RecordingSection>
-| | [~~~~~~~~ リアルタイム波形表示 ~~~~~~~~]         | |
-| +--------------------------------------------------+ |
-| |                                                  | |
-| | 📊 AIによる解析結果                             | |
-| | [ローディング状態 / 解析結果チップ表示]            | |  <AnalysisResults>
-| |   - Key: [C Major] - BPM: [120]                 | |
-| |   - Chords: [C|G|Am|F] - Genre: [Rock]          | |
-| +--------------------------------------------------+ |
-| |                                                  | |
-| | 🎧 AIにより自動で生成された伴奏                  | |
-| | [コントロール: Play/Stop/Download]               | |  <BackingTrackPlayer>
-| +--------------------------------------------------+ |
-|                                          [AIと相談]   |  FloatingActionButton
-+------------------------------------------------------+
 
-[Chat Overlay - 全画面オーバーレイ]
-+------------------------------------------------------+
-| [✕] 🤖 AI チャット                                 |
-+------------------------------------------------------+
-| AI: こんにちは！音楽について何でも聞いてください。   |
-| User: この曲に合う歌詞のテーマを考えて...            |  <ChatWindow>
-| AI: ...                                              |
-+------------------------------------------------------+
-| [ メッセージを入力...                    ] [送信]    |
-+------------------------------------------------------+
+
+### 4.2. UIコンポーネント階層構造
+
+FlutterアプリケーションのUIコンポーネト階層と状態管理の関係を示します。
+
+```mermaid
+flowchart TD
+    subgraph Flutter["Flutter Application"]
+        direction TB
+        
+        subgraph MyApp["MyApp (StatelessWidget)"]
+            MaterialApp["MaterialApp"]
+            Theme["ThemeData (Indigo + Google Fonts)"]
+        end
+        
+        subgraph MyHomePage["MyHomePage (StatefulWidget)"]
+            direction TB
+            State["_MyHomePageState\n(with TickerProviderStateMixin)"]
+            
+            subgraph StateManagement["状態管理"]
+                direction LR
+                RecordingState["RecordingState\n(idle/recording/uploading)"]
+                AnalysisResult["AudioAnalysisResult"]
+                ChatState["Chat State"]
+                AnimationControllers["Animation Controllers\n(×3)"]
+            end
+            
+            subgraph UIComponents["UIコンポーネンツ"]
+                direction TB
+                
+                AppBar["AppBar\n(グラデーションデザイン)"]
+                
+                subgraph ScrollView["SingleChildScrollView"]
+                    direction TB
+                    ExplanationComp["_buildExplanationSection()\nアプリ説明"]
+                    RecordingComp["_buildRecordingSection()\n録音コントロール"]
+                    AnalysisComp["_buildAnalysisResults()\n解析結果表示"]
+                    BackingTrackComp["_buildBackingTrackPlayer()\nバッキングトラック"]
+                end
+                
+                FloatingButton["FloatingActionButton\n(AIチャットボタン)"]
+                
+                subgraph ChatOverlayComp["_buildChatOverlay()"]
+                    direction TB
+                    ChatScaffold["Scaffold (オーバーレイ)"]
+                    ChatMessages["ListView.builder\n(メッセージ履歴)"]
+                    ChatInput["TextField + Send Button"]
+                end
+            end
+            
+            subgraph PlatformSpecific["プラットフォーム固有"]
+                direction LR
+                
+                subgraph Mobile["モバイル"]
+                    RecorderController["RecorderController"]
+                    PlayerController["PlayerController"]
+                    FileOperationsIO["file_operations_io.dart"]
+                end
+                
+                subgraph Web["Web"]
+                    WebAudioRecorder["WebAudioRecorder"]
+                    FileOperationsWeb["file_operations_web.dart"]
+                end
+            end
+        end
+    end
+    
+    %% 関係性
+    MyApp --> MyHomePage
+    MaterialApp --> Theme
+    State --> StateManagement
+    State --> UIComponents
+    State --> PlatformSpecific
+    
+    AppBar -.-> ScrollView
+    ScrollView --> ExplanationComp
+    ScrollView --> RecordingComp  
+    ScrollView --> AnalysisComp
+    ScrollView --> BackingTrackComp
+    FloatingButton -.->|タップ| ChatOverlayComp
+    
+    %% 状態管理関係
+    RecordingState -.-> RecordingComp
+    AnalysisResult -.-> AnalysisComp
+    ChatState -.-> ChatOverlayComp
+    AnimationControllers -.-> UIComponents
+    
+    %% プラットフォーム分岐
+    RecordingComp -.->|モバイル| Mobile
+    RecordingComp -.->|Web| Web
+    BackingTrackComp -.-> Mobile
+    BackingTrackComp -.-> Web
+    
+    classDef widgetStyle fill:#e8f5e8,stroke:#4caf50,stroke-width:2px
+    classDef stateStyle fill:#fff3e0,stroke:#ff9800,stroke-width:2px
+    classDef platformStyle fill:#e1f5fe,stroke:#2196f3,stroke-width:2px
+    
+    class UIComponents,ScrollView,ChatOverlayComp widgetStyle
+    class StateManagement,RecordingState,AnalysisResult,ChatState stateStyle
+    class PlatformSpecific,Mobile,Web platformStyle
 ```
 
-
-### 4.2. コンポーネント詳細
+### 4.3. コンポーネント詳細
 実装では単一の `MyHomePage` StatefulWidget 内に全機能を統合し、レスポンシブデザインとアニメーション対応を実現しています。
 
 | ウィジェット/機能 | 内部状態 | 責務 |
@@ -134,7 +275,77 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 ```
 
 
-### 5.2. 更新処理
+### 5.2. 状態遷移フロー
+
+アプリケーションの主要な状態遷移とユーザーアクションの関係を示します。
+
+```mermaid
+stateDiagram-v2
+    [*] --> AppInit : アプリ起動
+    
+    state "アプリ初期化" as AppInit {
+        [*] --> InitControllers : コントローラー初期化
+        InitControllers --> InitAnimations : アニメーション設定
+        InitAnimations --> PlatformDetection : プラットフォーム検出
+        PlatformDetection --> ReadyState : 準備完了
+    }
+    
+    AppInit --> ReadyState : 初期化完了
+    
+    state "準備状態" as ReadyState {
+        [*] --> Idle
+        Idle --> Recording : 録音ボタンタップ
+        Idle --> ChatOpen : AIチャットボタンタップ
+    }
+    
+    state "録音状態" as Recording {
+        [*] --> RecordingActive
+        RecordingActive --> WaveformDisplay : リアルタイム表示
+        WaveformDisplay --> RecordingStop : 停止ボタンタップ
+        RecordingStop --> ProcessingAudio : 音声処理開始
+    }
+    
+    state "音声処理" as ProcessingAudio {
+        [*] --> Uploading
+        Uploading --> AnalyzingAI : アップロード完了
+        AnalyzingAI --> GeneratingTrack : AI解析完了
+        GeneratingTrack --> ProcessingComplete : バッキングトラック生成
+        
+        AnalyzingAI --> ProcessingError : エラー発生
+        GeneratingTrack --> ProcessingError : エラー発生
+    }
+    
+    state "結果表示" as ResultDisplay {
+        [*] --> ShowingResults
+        ShowingResults --> PlayingOriginal : 録音再生ボタン
+        ShowingResults --> PlayingBackingTrack : バッキングトラック再生
+        PlayingOriginal --> ShowingResults : 停止
+        PlayingBackingTrack --> ShowingResults : 停止
+    }
+    
+    state "チャット状態" as ChatState {
+        [*] --> ChatIdle
+        ChatIdle --> TypingMessage : メッセージ入力
+        TypingMessage --> SendingMessage : 送信ボタンタップ
+        SendingMessage --> WaitingAIResponse : AI処理中
+        WaitingAIResponse --> ChatIdle : 応答受信
+        
+        WaitingAIResponse --> ChatError : エラー発生
+        ChatError --> ChatIdle : エラー処理完了
+    }
+    
+    Recording --> ProcessingAudio : 録音完了
+    ProcessingAudio --> ResultDisplay : 処理成功
+    ProcessingAudio --> ReadyState : エラー後リセット
+    
+    ReadyState --> ChatState : チャット開始
+    ChatState --> ReadyState : チャット閉じる
+    
+    ResultDisplay --> ReadyState : 新しい録音開始
+    ResultDisplay --> ChatState : AI相談開始
+```
+
+### 5.3. 更新処理メソッド
 `setState()` メソッドで状態を更新し、アニメーションコントローラーで視覚的フィードバックを管理します。主要な状態更新タイミング：
 
 **メイン機能関連**
@@ -156,7 +367,86 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 ## 6. API連携設計 (AudioProcessingService)
 フロントエンドは以下のAPIエンドポイントと通信します。非同期処理には Dart の `http` パッケージを使用します。
 
-### 6.0. 基本設定
+### 6.0. API連携フロー全体図
+
+```mermaid
+sequenceDiagram
+    participant U as 👤 User
+    participant F as 📱 Flutter App
+    participant API as 🚀 SessionMUSE API
+    participant AI as 🤖 Gemini 2.5
+    participant GCS as 📁 Cloud Storage
+    
+    Note over F: アプリ起動時
+    F->>F: プラットフォーム検出 (Web/Mobile)
+    F->>F: コントローラー初期化
+    
+    Note over U,GCS: 🎵 音声録音フロー
+    U->>F: 🎙️ 録音ボタンタップ
+    F->>F: RecorderController.開始() / WebAudioRecorder.開始()
+    F->>U: 🌊 リアルタイム波形表示
+    
+    U->>F: ⮜ 録音停止ボタン
+    F->>F: 音声ファイル保存 (WAV/WebM)
+    F->>F: 状態変更: uploading
+    
+    Note over F,GCS: 🚀 音声処理API呼び出し
+    F->>+API: POST /api/process
+    Note right of F: Content-Type: multipart/form-data<br/>Timeout: 3分<br/>Headers: Connection: keep-alive
+    
+    API->>+GCS: 音声ファイルアップロード
+    API->>+AI: 🎧 音声解析リクエスト
+    AI-->>-API: テーマ抽出結果
+    
+    API->>+AI: 🎼 MusicXML生成リクエスト
+    AI-->>-API: MusicXMLデータ
+    
+    API->>API: 🎹 MIDI変換 + FluidSynth合成
+    API->>+GCS: 生成MP3アップロード
+    GCS-->>-API: 公開アクセスURL
+    
+    API-->>-F: 200 OK: 解析結果 + MP3 URL
+    Note left of API: {
+    Note left of API:   "key": "C Major",
+    Note left of API:   "bpm": 120,
+    Note left of API:   "chords": "C|G|Am|F",
+    Note left of API:   "genre": "Rock",
+    Note left of API:   "generated_mp3_url": "https://..."
+    Note left of API: }
+    
+    F->>F: 解析結果状態更新
+    F->>U: 📊 結果チップ表示
+    F->>U: 🎧 バッキングトラック再生ボタン
+    
+    Note over U,AI: 💬 AIチャットフロー
+    U->>F: 🤖 AI相談ボタンタップ
+    F->>F: チャットオーバーレイ表示
+    
+    U->>F: メッセージ入力 + 送信
+    F->>+API: POST /api/chat
+    Note right of F: Content-Type: application/json<br/>Timeout: 2分<br/>音楽コンテキスト付き
+    
+    API->>+AI: 🧠 コンテキスト対応チャット
+    AI-->>-API: AI応答メッセージ
+    API-->>-F: 200 OK: {"content": "AI応答"}
+    
+    F->>F: メッセージ履歴更新
+    F->>U: 💬 AI応答表示 (Markdownレンダリング)
+    
+    Note over F,API: ⚠️ エラーハンドリング
+    alt APIエラー発生
+        API-->>F: 4xx/5xx エラー
+        F->>F: ローディング停止 + 状態リセット
+        F->>U: 🚨 SnackBarエラーメッセージ
+    end
+    
+    alt タイムアウト発生
+        F->>F: TimeoutExceptionキャッチ
+        F->>U: 🕰️ タイムアウトエラー通知
+    end
+```
+
+### 6.1. 基本設定
 ```dart
 class AudioProcessingService {
   static const String baseUrl = 'https://sessionmuse-backend-469350304561.us-east5.run.app';
@@ -243,6 +533,118 @@ class AudioProcessingService {
  * ログ出力: デバッグモード（`kDebugMode`）でのみ詳細ログを出力
 
 ## 8. プラットフォーム固有実装
+
+### 8.0. プラットフォーム分岐アーキテクチャ
+
+Flutterの条件付きインポートとプラットフォーム固有実装の関係を示します。
+
+```mermaid
+flowchart TD
+    subgraph Flutter["Flutter アプリケーション"]
+        direction TB
+        
+        Main["main.dart\n(メインアプリケーション)"]
+        
+        subgraph PlatformDetection["プラットフォーム検出"]
+            IsWeb["kIsWebフラグ"]
+            RuntimeCheck["実行時プラットフォーム判定"]
+        end
+        
+        subgraph AudioInterface["音声インターフェース"]
+            WebAudioRecorderInterface["web_audio_recorder.dart\n(インターフェース)"]
+        end
+        
+        subgraph FileInterface["ファイル操作インターフェース"]
+            FileOpsInterface["file_operations_*.dart\n(条件付きインポート)"]
+        end
+    end
+    
+    subgraph WebImplementation["Web実装"]
+        direction TB
+        
+        subgraph WebAudio["Web音声処理"]
+            WebAudioRecorderWeb["web_audio_recorder_web.dart"]
+            MediaRecorderAPI["Media Recorder API"]
+            AudioElement["HTML Audio Element"]
+            WebRTC["WebRTC getUserMedia"]
+        end
+        
+        subgraph WebFileOps["Webファイル操作"]
+            FileOpsWeb["file_operations_web.dart"]
+            MemoryStorage["Map<String, Uint8List>\n(メモリストレージ)"]
+            BlobAPI["Blob API"]
+        end
+    end
+    
+    subgraph MobileImplementation["モバイル実装"]
+        direction TB
+        
+        subgraph MobileAudio["モバイル音声処理"]
+            WebAudioRecorderStub["web_audio_recorder_stub.dart"]
+            AudioWaveforms["audio_waveforms パッケージ"]
+            RecorderController["RecorderController"]
+            PlayerController["PlayerController"]
+            BackingTrackController["backingTrackController"]
+        end
+        
+        subgraph MobileFileOps["モバイルファイル操作"]
+            FileOpsIO["file_operations_io.dart"]
+            DartIO["dart:io Fileクラス"]
+            PathProvider["path_provider パッケージ"]
+        end
+    end
+    
+    subgraph ConditionalImports["条件付きインポート"]
+        direction LR
+        
+        LibraryHTML["dart.library.html"]
+        LibraryIO["dart.library.io"]
+    end
+    
+    %% 関係性
+    Main --> PlatformDetection
+    Main --> AudioInterface
+    Main --> FileInterface
+    
+    PlatformDetection --> IsWeb
+    PlatformDetection --> RuntimeCheck
+    
+    AudioInterface -.->|条件付きインポート| ConditionalImports
+    FileInterface -.->|条件付きインポート| ConditionalImports
+    
+    ConditionalImports -->|dart.library.html| WebImplementation
+    ConditionalImports -->|dart.library.io| MobileImplementation
+    
+    %% Web実装詳細
+    WebAudioRecorderInterface -.->|Web環境| WebAudioRecorderWeb
+    WebAudioRecorderWeb --> MediaRecorderAPI
+    WebAudioRecorderWeb --> AudioElement
+    WebAudioRecorderWeb --> WebRTC
+    
+    FileOpsInterface -.->|Web環境| FileOpsWeb
+    FileOpsWeb --> MemoryStorage
+    FileOpsWeb --> BlobAPI
+    
+    %% モバイル実装詳細
+    WebAudioRecorderInterface -.->|モバイル環境| WebAudioRecorderStub
+    WebAudioRecorderStub --> AudioWaveforms
+    AudioWaveforms --> RecorderController
+    AudioWaveforms --> PlayerController
+    AudioWaveforms --> BackingTrackController
+    
+    FileOpsInterface -.->|モバイル環境| FileOpsIO
+    FileOpsIO --> DartIO
+    FileOpsIO --> PathProvider
+    
+    classDef webStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef mobileStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef interfaceStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    
+    class WebImplementation,WebAudio,WebFileOps webStyle
+    class MobileImplementation,MobileAudio,MobileFileOps mobileStyle
+    class AudioInterface,FileInterface,ConditionalImports interfaceStyle
+```
+
 ### 8.1. 音声録音・再生
  * **モバイル環境**: `audio_waveforms` パッケージの `RecorderController` / `PlayerController` を使用
    * リアルタイム波形表示対応
