@@ -20,7 +20,7 @@ MUSICXML_GENERATION_PROMPT_TEMPLATE = """
 長さ: 4小節
 内容: バッキングトラックのみ（主旋律は不要）
 2. トラックの雰囲気/テーマ:
-{humming_analysis_theme}
+{humming_theme}
 3. 楽器編成:
 上記で指定された「雰囲気/テーマ」に最も適した楽器編成をAIが自動で選択してください。
 特定の楽器に固定せず、ピアノ、ギター、ベース、ドラム、ストリングス、ブラス、シンセサイザーなど、幅広い選択肢の中から自由に組み合わせてください。
@@ -53,6 +53,17 @@ MusicXML構造のみ出力してください。MUSICXML_START と MUSICXML_END �
 後続の以下の処理でMusicXMLを抽出できるような出力にしてください。
 match = re.search(r"MUSICXML_START\s*([\s\S]+?)\s*MUSICXML_END", content, re.DOTALL)
 """
+
+ANALYZE_MUSICXML_PROMPT = """
+あなたは熟練の音楽アナリストです。
+提供されたMusicXMLデータを分析し、その主要な音楽的特徴を抽出してください。
+具体的には、以下の4つの項目について分析し、結果を報告してください。
+- Key (キー・調)
+- BPM (テンポ)
+- Chords (コード進行)
+- Genre (ジャンル)
+"""
+
 
 # --- Prompts for vertex_chat_service.py ---
 
