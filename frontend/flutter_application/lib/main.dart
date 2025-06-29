@@ -360,6 +360,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   bool _isBackingTrackPlaying = false;
   bool _backingTrackListenerAdded = false;
 
+  // Android版API認証関連
+  int _logoTapCount = 0;
+  bool _isApiAccessEnabled = false;
+  DateTime? _apiAccessExpiry;
+
 
   @override
   void initState() {
@@ -423,6 +428,12 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
     // 初期状態で解析結果を表示
     _isAnalyzed = true;
+
+    // Android版では常に制限モードから開始（永続化しない）
+    if (Platform.isAndroid) {
+      _isApiAccessEnabled = false;
+      _apiAccessExpiry = null;
+    }
   }
 
   @override
@@ -439,6 +450,20 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
   void _sendMessage() async {
     if (_messageController.text.trim().isEmpty || _isLoadingResponse) {
+      return;
+    }
+
+    // Android版でAPI認証チェック
+    if (Platform.isAndroid && !_isApiAccessAllowed()) {
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🔒 チャット機能は現在利用できません'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
       return;
     }
 
@@ -743,6 +768,23 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   Future<void> _uploadAndAnalyze() async {
     if (_audioFilePath == null) {
       if (kDebugMode) print('音声ファイルが存在しません');
+      return;
+    }
+
+    // Android版でAPI認証チェック
+    if (Platform.isAndroid && !_isApiAccessAllowed()) {
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🔒 音声解析機能は現在利用できません'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      setState(() {
+        _recordingState = RecordingState.idle;
+      });
       return;
     }
 
@@ -1307,6 +1349,67 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     }
   }
 
+  // Android版API認証関連メソッド（永続化なし）
+
+  void _onLogoTap() {
+    if (!Platform.isAndroid) return;
+    
+    setState(() {
+      _logoTapCount++;
+    });
+    
+    if (kDebugMode) print('Logo tap count: $_logoTapCount');
+    
+    if (_logoTapCount >= 5) {
+      _enableApiAccess();
+      _logoTapCount = 0;
+    }
+    
+    // 5秒後にカウントをリセット
+    Timer(const Duration(seconds: 5), () {
+      if (_logoTapCount < 5) {
+        setState(() {
+          _logoTapCount = 0;
+        });
+      }
+    });
+  }
+
+  void _enableApiAccess() {
+    if (!Platform.isAndroid) return;
+    
+    final now = DateTime.now();
+    final expiry = now.add(const Duration(hours: 2));
+    
+    setState(() {
+      _isApiAccessEnabled = true;
+      _apiAccessExpiry = expiry;
+    });
+    
+    if (kDebugMode) print('API access enabled for 2 hours until: $expiry (not persisted)');
+    
+    if (mounted && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔓 すべての機能が利用可能になりました'),
+          duration: Duration(seconds: 3),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  bool _isApiAccessAllowed() {
+    if (!Platform.isAndroid) return true; // Web/iOS版では制限なし
+    
+    if (!_isApiAccessEnabled || _apiAccessExpiry == null) {
+      return false;
+    }
+    
+    final now = DateTime.now();
+    return now.isBefore(_apiAccessExpiry!);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (kDebugMode) {
@@ -1336,47 +1439,49 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             ],
           ),
         ),
-        title: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.3),
-                  width: 1,
-                ),
-              ),
-              child: Icon(
-                Icons.music_note,
-                color: Colors.white,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ShaderMask(
-                  shaderCallback: (bounds) => LinearGradient(
-                    colors: [
-                      Colors.white,
-                      Colors.white.withValues(alpha: 0.8),
-                    ],
-                  ).createShader(bounds),
-                  child: const Text(
-                    'SessionMUSE',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      letterSpacing: 1.2,
-                    ),
+        title: GestureDetector(
+          onTap: _onLogoTap,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.3),
+                    width: 1,
                   ),
                 ),
+                child: Icon(
+                  Icons.music_note,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ShaderMask(
+                    shaderCallback: (bounds) => LinearGradient(
+                      colors: [
+                        Colors.white,
+                        Colors.white.withValues(alpha: 0.8),
+                      ],
+                    ).createShader(bounds),
+                    child: const Text(
+                      'SessionMUSE',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                  ),
                 Text(
                   'Your AI Music Partner',
                   style: TextStyle(
@@ -1386,6 +1491,19 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                     letterSpacing: 0.5,
                   ),
                 ),
+                if (Platform.isAndroid)
+                  Text(
+                    _isApiAccessEnabled 
+                        ? '🔓 フル機能利用中'
+                        : '🔒 制限モード',
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: _isApiAccessEnabled 
+                          ? Colors.green.shade200 
+                          : Colors.orange.shade200,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
               ],
             ),
             const SizedBox(width: 12),
@@ -1431,6 +1549,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
             ),
           ],
+        ),
         ),
         centerTitle: true,
       ),

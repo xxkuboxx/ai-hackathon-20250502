@@ -26,6 +26,15 @@ resource "google_storage_bucket" "tracks_bucket" {
   storage_class               = "STANDARD"
   uniform_bucket_level_access = true
 
+  cors {
+    origin = var.frontend_origins
+
+    method          = ["GET"]
+    response_header = ["Content-Type"]
+    max_age_seconds = 3600
+  }
+
+
   lifecycle_rule {
     condition {
       age = 1
