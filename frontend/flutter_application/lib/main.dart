@@ -23,27 +23,60 @@ enum RecordingState {
 
 // API応答データモデル
 class AudioAnalysisResult {
+  final String hummingTheme;
   final String key;
   final int bpm;
   final String chords;
   final String genre;
   final String? backingTrackUrl;
+  final String? generatedMp3Url;
+  final bool isRetried;
 
   AudioAnalysisResult({
+    required this.hummingTheme,
     required this.key,
     required this.bpm,
     required this.chords,
     required this.genre,
     this.backingTrackUrl,
+    this.generatedMp3Url,
+    this.isRetried = false,
   });
 
   factory AudioAnalysisResult.fromJson(Map<String, dynamic> json) {
+    // 新しいBackend APIレスポンス構造に対応
+    final analysisData = json['analysis'] as Map<String, dynamic>?;
+    
     return AudioAnalysisResult(
-      key: json['key'] ?? 'Unknown',
-      bpm: json['bpm'] ?? 120,
-      chords: json['chords'] ?? 'Unknown',
-      genre: json['genre'] ?? 'Unknown',
-      backingTrackUrl: json['generated_mp3_url'],
+      hummingTheme: json['humming_theme'] ?? 'AI解析中...',
+      key: analysisData?['key'] ?? 'Unknown',
+      bpm: analysisData?['bpm'] ?? 120,
+      chords: (analysisData?['chords'] as List<dynamic>?)?.join(' | ') ?? 'Unknown',
+      genre: analysisData?['genre'] ?? 'Unknown',
+      backingTrackUrl: json['backing_track_url'],
+      generatedMp3Url: json['generated_mp3_url'],
+    );
+  }
+
+  AudioAnalysisResult copyWith({
+    String? hummingTheme,
+    String? key,
+    int? bpm,
+    String? chords,
+    String? genre,
+    String? backingTrackUrl,
+    String? generatedMp3Url,
+    bool? isRetried,
+  }) {
+    return AudioAnalysisResult(
+      hummingTheme: hummingTheme ?? this.hummingTheme,
+      key: key ?? this.key,
+      bpm: bpm ?? this.bpm,
+      chords: chords ?? this.chords,
+      genre: genre ?? this.genre,
+      backingTrackUrl: backingTrackUrl ?? this.backingTrackUrl,
+      generatedMp3Url: generatedMp3Url ?? this.generatedMp3Url,
+      isRetried: isRetried ?? this.isRetried,
     );
   }
 }
@@ -129,6 +162,56 @@ class AudioProcessingService {
       }
     } catch (e) {
       if (kDebugMode) print('Upload Error: $e');
+      return null;
+    }
+  }
+
+  // リトライ機能付きアップロード処理
+  static Future<AudioAnalysisResult?> uploadAndProcessWithRetry(
+    String filePath, {
+    Uint8List? webAudioData,
+    Function(bool isRetrying)? onRetryStatusChanged,
+  }) async {
+    // 初回試行
+    if (kDebugMode) print('初回音声解析を開始します');
+    onRetryStatusChanged?.call(false);
+    
+    AudioAnalysisResult? result = await uploadAndProcess(
+      filePath,
+      webAudioData: webAudioData,
+    );
+    
+    // 初回成功の場合、MP3 URLが生成されているかチェック
+    if (result != null && result.generatedMp3Url != null && result.generatedMp3Url!.isNotEmpty) {
+      if (kDebugMode) print('初回解析が成功しました（MP3生成完了）');
+      return result;
+    }
+    
+    // 初回でMP3生成が失敗している場合、リトライ実行
+    if (kDebugMode) print('MP3生成に失敗しました。リトライを実行します...');
+    onRetryStatusChanged?.call(true);
+    
+    // 2秒待機してからリトライ
+    await Future.delayed(const Duration(seconds: 2));
+    
+    AudioAnalysisResult? retryResult = await uploadAndProcess(
+      filePath,
+      webAudioData: webAudioData,
+    );
+    
+    onRetryStatusChanged?.call(false);
+    
+    if (retryResult != null) {
+      // リトライ成功の場合、フラグを立てて返す
+      if (kDebugMode) print('リトライ解析が成功しました');
+      return retryResult.copyWith(isRetried: true);
+    } else {
+      // リトライも失敗した場合、初回結果があれば返す（MP3なしでも）
+      if (result != null) {
+        if (kDebugMode) print('リトライも失敗しましたが、初回結果を返します');
+        return result.copyWith(isRetried: true);
+      }
+      if (kDebugMode) print('初回・リトライ共に失敗しました');
       return null;
     }
   }
@@ -260,6 +343,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
   // API分析結果
   AudioAnalysisResult? _analysisResult;
+
+  // リトライ状態管理
+  bool _isRetrying = false;
 
   // プレイヤー状態リスナー管理
   bool _playerListenerAdded = false;
@@ -658,9 +744,16 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         // Web環境：メモリ上のデータを使用
         final webAudioData = getWebAudioFile(_audioFilePath!);
         if (webAudioData != null) {
-          result = await AudioProcessingService.uploadAndProcess(
+          result = await AudioProcessingService.uploadAndProcessWithRetry(
             _audioFilePath!,
             webAudioData: webAudioData,
+            onRetryStatusChanged: (isRetrying) {
+              if (mounted) {
+                setState(() {
+                  _isRetrying = isRetrying;
+                });
+              }
+            },
           );
         } else {
           if (kDebugMode) print('Web音声データが見つかりません');
@@ -668,7 +761,16 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         }
       } else {
         // モバイル環境：ファイルパスを使用
-        result = await AudioProcessingService.uploadAndProcess(_audioFilePath!);
+        result = await AudioProcessingService.uploadAndProcessWithRetry(
+          _audioFilePath!,
+          onRetryStatusChanged: (isRetrying) {
+            if (mounted) {
+              setState(() {
+                _isRetrying = isRetrying;
+              });
+            }
+          },
+        );
       }
 
       // キャンセルされた場合は処理を中断
@@ -687,10 +789,13 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         _progressAnimationController.stop();
 
         if (mounted && context.mounted) {
+          String message = result.isRetried 
+            ? '音楽解析が完了しました（リトライ実行）'
+            : '音楽解析が完了しました';
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('音楽解析が完了しました'),
-              duration: Duration(seconds: 2),
+            SnackBar(
+              content: Text(message),
+              duration: const Duration(seconds: 2),
             ),
           );
         }
@@ -2036,6 +2141,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 ),
               ),
               const SizedBox(height: 20),
+              // テーマ表示
+              if (_isAnalyzed && _analysisResult?.hummingTheme != null) ...[
+                _buildThemeDisplay(),
+                const SizedBox(height: 16),
+              ],
               _isAnalyzed 
                 ? GridView.count(
                     shrinkWrap: true,
@@ -2466,6 +2576,117 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                       ),
                     ),
                   ),
+                  const SizedBox(width: 12),
+                  // MP3ダウンロードボタン
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: (_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty)
+                              ? [Colors.white, Colors.purple.shade50]
+                              : [Colors.white, Colors.grey.shade100],
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: (_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty) 
+                            ? Colors.purple.shade200 
+                            : Colors.grey.shade300,
+                          width: 1,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: ((_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty) 
+                              ? Colors.purple 
+                              : Colors.grey).withValues(alpha: 0.2),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: InkWell(
+                        onTap: (_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty)
+                            ? () async {
+                                final mp3Url = _analysisResult!.generatedMp3Url!;
+                                if (mounted && context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'MP3ファイルURL: $mp3Url',
+                                      ),
+                                      duration: const Duration(seconds: 3),
+                                      action: SnackBarAction(
+                                        label: 'コピー',
+                                        onPressed: () {
+                                          // URLをクリップボードにコピーする機能はプラットフォーム依存のため省略
+                                        },
+                                      ),
+                                    ),
+                                  );
+                                }
+                              }
+                            : () {
+                                if (mounted && context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('MP3ファイルが生成されるとダウンロードできます'),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
+                                }
+                              },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Column(
+                          children: [
+                            Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: (_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty)
+                                      ? [Colors.purple.shade500, Colors.purple.shade700]
+                                      : [Colors.grey.shade400, Colors.grey.shade500],
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: ((_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty) 
+                                      ? Colors.purple 
+                                      : Colors.grey).withValues(alpha: 0.3),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(
+                                Icons.music_video_rounded,
+                                size: 24,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              (_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty) 
+                                ? '🎵 MP3取得' 
+                                : '🎵 生成待ち',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: (_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty) 
+                                  ? Colors.purple.shade700 
+                                  : Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -2856,6 +3077,77 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildThemeDisplay() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.indigo.shade50,
+            Colors.purple.shade50,
+            Colors.pink.shade50,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Colors.indigo.shade100,
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.indigo.withValues(alpha: 0.1),
+            blurRadius: 15,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.indigo.shade500,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.color_lens,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'ハミング解析テーマ',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.indigo,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _analysisResult?.hummingTheme ?? 'テーマ情報なし',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.indigo.shade700,
+              height: 1.4,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAnalysisChip(String label, String value, IconData icon) {
     return Container(
       constraints: isWeb ? const BoxConstraints(maxHeight: 100) : null, // Web版は最大高さ制限
@@ -3090,15 +3382,25 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
             ),
             const SizedBox(height: 8),
-            // 残り時間表示
-            Text(
-              '残り時間: ${((1 - progress) * 60).toInt()}秒',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey.shade600,
-                fontWeight: FontWeight.w500,
+            // 残り時間表示とリトライ状況
+            if (_isRetrying) 
+              Text(
+                'リトライ中... しばらくお待ちください',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.orange.shade600,
+                  fontWeight: FontWeight.w600,
+                ),
+              )
+            else
+              Text(
+                '残り時間: ${((1 - progress) * 60).toInt()}秒',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
           ],
         );
       },
