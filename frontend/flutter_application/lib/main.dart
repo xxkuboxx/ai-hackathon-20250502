@@ -389,12 +389,22 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       _webAudioRecorder!.checkPermission();
     } else {
       // モバイル環境
-      _recorderController = RecorderController();
-      playerController = PlayerController();
-      backingTrackController = PlayerController();
-      _webAudioRecorder = null;
-      // アプリ起動時に録音権限を取得
-      _recorderController!.checkPermission();
+      try {
+        _recorderController = RecorderController();
+        playerController = PlayerController();
+        backingTrackController = PlayerController();
+        _webAudioRecorder = null;
+        // アプリ起動時に録音権限を取得
+        _recorderController!.checkPermission();
+        if (kDebugMode) print('モバイル環境でのプレイヤー初期化が完了しました');
+      } catch (e) {
+        if (kDebugMode) print('プレイヤー初期化エラー: $e');
+        // プレイヤー初期化に失敗した場合はnullに設定
+        _recorderController = null;
+        playerController = null;
+        backingTrackController = null;
+        _webAudioRecorder = null;
+      }
     }
 
     // 初期メッセージを追加
@@ -1017,6 +1027,19 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       return;
     }
 
+    // URLの基本的な妥当性をチェック
+    if (!_isValidUrl(backingTrackUrl)) {
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('バッキングトラックのURLが無効です'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
     // Web環境では直接URLを再生
     if (isWeb) {
       await _toggleWebBackingTrackPlayback(backingTrackUrl);
@@ -1025,6 +1048,15 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
     // モバイル環境でのバッキングトラック再生
     if (backingTrackController == null) {
+      if (kDebugMode) print('BackingTrackController is null in mobile environment');
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('音声プレイヤーの初期化に失敗しました'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
       return;
     }
 
@@ -1067,10 +1099,13 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         }
 
         // URL から再生開始
+        if (kDebugMode) print('プレイヤーを準備中: $backingTrackUrl');
         await backingTrackController!.preparePlayer(
           path: backingTrackUrl,
           shouldExtractWaveform: true,
         );
+        
+        if (kDebugMode) print('プレイヤーの準備が完了、再生を開始します');
         await backingTrackController!.startPlayer();
         setState(() {
           _isBackingTrackPlaying = true;
@@ -1078,15 +1113,34 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         if (kDebugMode) print('バッキングトラック再生が開始されました');
       }
     } catch (e) {
-      if (kDebugMode) print('バッキングトラック再生エラー: $e');
+      if (kDebugMode) {
+        print('バッキングトラック再生エラー: $e');
+        print('エラータイプ: ${e.runtimeType}');
+        print('BackingTrack URL: $backingTrackUrl');
+      }
       setState(() {
         _isBackingTrackPlaying = false;
       });
       if (mounted && context.mounted) {
+        String errorMessage = 'バッキングトラックの再生に失敗しました';
+        if (e.toString().contains('network') || e.toString().contains('connection')) {
+          errorMessage = 'ネットワークエラー：インターネット接続を確認してください';
+        } else if (e.toString().contains('format') || e.toString().contains('codec')) {
+          errorMessage = 'バッキングトラックの形式がサポートされていません';
+        } else if (e.toString().contains('permission')) {
+          errorMessage = '音声再生の権限がありません';
+        }
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('バッキングトラック再生エラー: $e'),
-            duration: const Duration(seconds: 3),
+            content: Text(errorMessage),
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: '再試行',
+              onPressed: () {
+                _toggleBackingTrackPlayback();
+              },
+            ),
           ),
         );
       }
@@ -1094,7 +1148,18 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _toggleWebBackingTrackPlayback(String url) async {
-    if (_webAudioRecorder == null) return;
+    if (_webAudioRecorder == null) {
+      if (kDebugMode) print('WebAudioRecorder is null');
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Web音声プレイヤーが初期化されていません'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
 
     try {
       if (_isBackingTrackPlaying) {
@@ -1111,14 +1176,18 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           _isBackingTrackPlaying = true;
         });
 
-        // 再生完了を監視
-        _webAudioRecorder.playbackStateStream.listen((isPlaying) {
-          if (mounted) {
-            setState(() {
-              _isBackingTrackPlaying = isPlaying;
-            });
-          }
-        });
+        // リスナーの重複を避けるため、一度だけ設定
+        if (!_backingTrackListenerAdded) {
+          _webAudioRecorder.playbackStateStream.listen((isPlaying) {
+            if (mounted) {
+              setState(() {
+                _isBackingTrackPlaying = isPlaying;
+              });
+            }
+          });
+          _backingTrackListenerAdded = true;
+          if (kDebugMode) print('Webバッキングトラックリスナーを追加しました');
+        }
 
         // URLから音声を再生（実際のWeb実装では fetch + AudioContext を使用）
         await _webAudioRecorder.playAudioFromUrl(url);
@@ -1131,7 +1200,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       if (mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('バッキングトラック再生エラー: $e'),
+            content: Text('バッキングトラック再生エラー: ${e.toString()}'),
             duration: const Duration(seconds: 3),
           ),
         );
@@ -1143,6 +1212,17 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     setState(() {
       _isChatOpen = !_isChatOpen;
     });
+  }
+
+  // URL妥当性チェック用ヘルパーメソッド
+  bool _isValidUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      return uri.isAbsolute && (uri.scheme == 'http' || uri.scheme == 'https');
+    } catch (e) {
+      if (kDebugMode) print('URL validation error: $e');
+      return false;
+    }
   }
 
   @override
