@@ -2,7 +2,7 @@
 
 🎵 Your AI Music Partner - AIと一緒に音楽を作るプラットフォーム
 
-[![video](https://img.youtube.com/vi/y03-XEM2ZXc/0.jpg)](https://www.youtube.com/shorts/y03-XEM2ZXc)
+![SessionMUSE Demo](https://raw.githubusercontent.com/xxkuboxx/ai-hackathon-20250502/main/frontend/flutter_application/debug_screenshots/app_ready.png)
 
 ## 🎯 概要
 
