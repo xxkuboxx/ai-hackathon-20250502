@@ -40,7 +40,7 @@ Session MUSEは、これらの「壁」を打ち破るAIバンドメンバーで
 ✨ **簡単3ステップでAIとセッション**
 🎤 **① 鼻歌を録音** → 🤖 **② AI解析実行** → 🎵 **③ 一緒に演奏**
 
-![Session MUSE ホーム画面](screenshot/iOS/screenshot1.PNG)
+![Session MUSE ホーム画面](screenshot/iOS/screenshot1-part.PNG)
 
 **従来手法との違い**
 | 従来のAI作曲ツール | Session MUSE |
