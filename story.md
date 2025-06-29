@@ -87,7 +87,7 @@ Session MUSEが単なる自動作曲ツールと一線を画すのが、この�
 
 ## 3. デモンストレーション
 
-![Session MUSE Demo](video/iOS_ScreenRecording_06-29-2025%2021-21-38_1.mp4)
+![Session MUSE Demo](video/demo_compressed.mp4)
 
 ### シナリオ：ユーザー「Takeshi」の創作セッション
 
