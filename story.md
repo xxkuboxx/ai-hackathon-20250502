@@ -7,7 +7,7 @@
 「この方向性で合っているのだろうか？」
 「アイデアが枯渇して、次の一手が見えない…」
 
-![Session MUSE ホーム画面](image/Gemini_Generated_Image_hkcpm5hkcpm5hkcp.png)
+![image](image/Gemini_Generated_Image_hkcpm5hkcpm5hkcp.png)
 
 バンドメンバーやプロデューサーがいれば得られる客観的なフィードバックや、予期せぬインスピレーション。しかし、誰もがその環境に恵まれているわけではありません。
 
@@ -42,7 +42,7 @@ Session MUSEは、これらの「壁」を打ち破るAIバンドメンバーで
 ✨ **簡単3ステップでAIとセッション**
 🎤 **① 鼻歌を録音** → 🤖 **② AI解析実行** → 🎵 **③ 一緒に演奏**
 
-![Session MUSE ホーム画面](screenshot/iOS/screenshot1-part.PNG)
+![image](screenshot/iOS/screenshot1-part.PNG)
 
 **従来手法との違い**
 | 従来のAI作曲ツール | Session MUSE |
@@ -102,7 +102,7 @@ Session MUSEが単なる自動作曲ツールと一線を画すのが、この�
 
 #### 実際の画面フロー
 
-|![鼻歌録音画面](screenshot/iOS/screenshot2.PNG)|![AI解析結果画面](screenshot/iOS/screenshot3.PNG)|![バッキングトラック生成画面](screenshot/iOS/screenshot4.PNG)|![AI対話画面](screenshot/iOS/screenshot5.PNG)|
+|![image](screenshot/iOS/screenshot2.PNG)|![image](screenshot/iOS/screenshot3.PNG)|![image](screenshot/iOS/screenshot4.PNG)|![image](screenshot/iOS/screenshot5.PNG)|
 |:---:|:---:|:---:|:---:|
 
 **所要時間：約4分** (鼻歌アップロードから最終成果物まで)
