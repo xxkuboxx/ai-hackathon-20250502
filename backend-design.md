@@ -574,8 +574,12 @@ flowchart LR
 7. **マルチファイル配信**
    ```json
    {
+     "humming_theme": "明るくエネルギッシュなJ-POP風のメロディー",
      "analysis": {
-       "humming_theme": "明るくエネルギッシュなJ-POP風のメロディー"
+       "key": "C Major",
+       "bpm": 120,
+       "chords": ["C", "G", "Am", "F"],
+       "genre": "J-POP"
      },
      "backing_track_url": "https://storage.googleapis.com/.../file.musicxml",
      "original_file_url": "https://storage.googleapis.com/.../original.wav", 
@@ -785,28 +789,26 @@ class ErrorResponse(BaseModel):
 
 #### 現在のモデル（テーマベース）:
 ```python
-# ✅ 新しいアプローチ: 人間的な音楽理解
-class AnalysisResult(BaseModel):
-    humming_theme: str = Field(
-        ..., 
-        description="口ずさみ音声から解析されたトラックの雰囲気/テーマ", 
-        example="明るくエネルギッシュなJ-POP"
-    )
-    # 注意: key, bpm, chords, genre_by_ai は廃止
+# ✅ 現在の実装: テーマ + 詳細音楽解析のハイブリッドアプローチ
+class MusicAnalysisFeatures(BaseModel):
+    """
+    AIによってMusicXMLから解析された音楽的特徴。
+    structured_outputとして利用される。
+    """
+    key: str = Field(..., description="楽曲のキー (調)。例: 'C Major', 'A minor'")
+    bpm: int = Field(..., description="楽曲のテンポ (Beats Per Minute)。例: 120")
+    chords: List[str] = Field(..., description="楽曲の主要なコード進行。例: ['C', 'G', 'Am', 'F']")
+    genre: str = Field(..., description="楽曲のジャンル。例: 'J-POP', 'Rock'")
 
 class ProcessResponse(BaseModel):
-    analysis: AnalysisResult
-    backing_track_url: HttpUrl = Field(
-        ..., 
-        description="生成されたバッキングトラックMusicXMLの公開URL"
-    )
+    humming_theme: str = Field(..., description="口ずさみ音声から解析されたトラックの雰囲気/テーマ", example="明るくエネルギッシュなJ-POP")
+    analysis: Optional[MusicAnalysisFeatures] = Field(None, description="MusicXMLから解析された音楽的特徴")
+    backing_track_url: HttpUrl = Field(..., description="生成されたバッキングトラックMusicXMLの公開URL")
     original_file_url: Optional[HttpUrl] = Field(
-        None, 
-        description="アップロードされたオリジナル音声ファイルの公開URL"
+        None, description="アップロードされたオリジナル音声ファイルの公開URL"
     )
     generated_mp3_url: Optional[HttpUrl] = Field(
-        None, 
-        description="生成されたMP3ファイルの公開URL"
+        None, description="生成されたMP3ファイルの公開URL"
     )
 ```
 
@@ -822,7 +824,7 @@ class ChatRequest(BaseModel):
         min_length=1, 
         description="対話履歴。最低1件のメッセージが必要。"
     )
-    analysis_context: Optional[AnalysisResult] = Field(
+    humming_theme: Optional[str] = Field(
         None, 
         description="現在の楽曲の解析情報（トラックの雰囲気/テーマ）"
     )

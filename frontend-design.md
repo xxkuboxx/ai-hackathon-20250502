@@ -140,7 +140,7 @@ flowchart TD
                 RecordingState["RecordingState\n(idle/recording/uploading)"]
                 AnalysisResult["AudioAnalysisResult"]
                 ChatState["Chat State"]
-                AnimationControllers["Animation Controllers\n(×3)"]
+                AnimationControllers["Animation Controllers\n(×2)"]
             end
             
             subgraph UIComponents["UIコンポーネンツ"]
@@ -225,27 +225,30 @@ flowchart TD
 |---|---|---|
 | `_buildExplanationSection()` | - | アプリ紹介、価値提案、問題・解決フロー可視化 |
 | `_buildRecordingSection()` | `_recordingState: RecordingState`<br>`_audioFilePath: String?` | 音声録音・停止処理、録音状態表示、リアルタイム波形表示 |
-| `_buildAnalysisResults()` | `_analysisResult: AudioAnalysisResult?`<br>`_isAnalyzed: bool` | 音声解析結果表示、ローディング状態管理、結果チップ表示 |
+| `_buildAnalysisResults()` | `_analysisResult: AudioAnalysisResult?`<br>`_isRetrying: bool` | 音声解析結果表示、ローディング状態管理、結果チップ表示 |
 | `_buildBackingTrackPlayer()` | `_isPlaying: bool`<br>`_isBackingTrackPlaying: bool`<br>`backingTrackController: PlayerController?` | 録音音声・バッキングトラック再生、ダウンロード機能 |
 | `_buildChatOverlay()` | `_messages: List<ChatMessage>`<br>`_chatHistory: List<ChatMessageModel>`<br>`_isLoadingResponse: bool`<br>`_isChatOpen: bool`<br>`_scrollController: ScrollController` | 全画面チャットオーバーレイ、コンテキスト対応AI対話、履歴管理 |
-| **アニメーション関連** | `_loadingAnimationController`<br>`_chatLoadingAnimationController`<br>`_progressAnimationController` | カスタムローディングアニメーション、プログレス表示 |
+| **アニメーション関連** | `_chatLoadingAnimationController`<br>`_progressAnimationController` | チャットローディング、プログレス表示アニメーション |
 | **補助UI関連** | - | `_buildFlowStep()`, `_buildCustomLoadingAnimation()`, `_buildModernProgressBar()` 等 |
 
 
 ## 5. 状態管理設計 (_MyHomePageState)
 アプリケーション全体の状態は `MyHomePage` の `StatefulWidget` 内で一元管理し、`TickerProviderStateMixin` によるアニメーション対応を実現しています。
 
-### 5.1. 管理する状態 (State)
+### 5.1. 管理する状態 (State) - 最新実装版
 ```dart
 class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   // UI制御
   RecordingState _recordingState = RecordingState.idle;  // 録音状態（idle/recording/uploading）
-  bool _isAnalyzed = false;                              // 解析完了フラグ
   bool _isPlaying = false;                               // 音声再生状態
   bool _isChatOpen = false;                              // チャット画面表示フラグ
   bool _isLoadingResponse = false;                       // AIチャット応答待ちフラグ
   bool _isBackingTrackPlaying = false;                   // バッキングトラック再生状態
   bool _shouldCancelAnalysis = false;                    // 解析キャンセルフラグ
+  bool _isRetrying = false;                              // リトライ処理中フラグ
+  bool _isPlayerPrepared = false;                        // プレイヤー準備状態
+  bool _isApiAccessEnabled = false;                      // Android版API認証状態
+  int _logoTapCount = 0;                                 // ロゴタップカウント
 
   // データ
   String? _audioFilePath;                                // 録音ファイルパス
@@ -257,10 +260,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   
-  // アニメーションコントローラー
-  late AnimationController _loadingAnimationController;   // メインローディング
+  // アニメーションコントローラー（2つのみ実装）
   late AnimationController _chatLoadingAnimationController; // チャットローディング
-  late AnimationController _progressAnimationController;  // プログレス表示
+  late AnimationController _progressAnimationController;    // プログレス表示
 
   // 音声処理用コントローラー
   RecorderController? _recorderController;               // モバイル用録音
@@ -271,6 +273,10 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   // リスナー管理フラグ
   bool _playerListenerAdded = false;
   bool _backingTrackListenerAdded = false;
+
+  // プラットフォーム検出
+  bool get isWeb => kIsWeb;
+  bool get isRecordingSupported => true;                 // Web版でも録音機能をサポート
 }
 ```
 
@@ -446,16 +452,20 @@ sequenceDiagram
     end
 ```
 
-### 6.1. 基本設定
+### 6.1. 基本設定とAPIエンドポイント
+音声処理サービスは以下のベースURLとエンドポイントを使用します：
+
 ```dart
 class AudioProcessingService {
   static const String baseUrl = 'https://sessionmuse-backend-469350304561.us-east5.run.app';
-  // ...
+  
+  // エンドポイント
+  static const String processEndpoint = '/api/process';
+  static const String chatEndpoint = '/api/chat';
 }
 ```
 
-
-### 6.1. 音声処理API
+### 6.2. 音声処理API
  * エンドポイント: `POST /api/process`
  * 説明: 音声ファイルのアップロード、解析を一つのエンドポイントで処理します。
  * 実装: `uploadAndProcess()` メソッド（**3分タイムアウト設定**）
@@ -487,7 +497,7 @@ class AudioProcessingService {
    ```
 
 
-### 6.2. AIチャットAPI
+### 6.3. AIチャットAPI
  * エンドポイント: `POST /api/chat`
  * 説明: 現在のチャット履歴と音楽的文脈を送信し、AIからの応答を取得します。
  * 実装: `sendChatMessage()` メソッド（**2分タイムアウト設定**）
@@ -523,14 +533,105 @@ class AudioProcessingService {
    ```
 
 
-## 7. エラーハンドリング
- * API通信エラー: `http` パッケージの例外処理で通信エラーを捕捉します。APIが返すエラーステータスコード（4xx, 5xx）もハンドリングし、エラー種別に応じて適切なメッセージを表示します。
- * UIでの表示: エラーが発生した場合、`ScaffoldMessenger.of(context).showSnackBar()` を使用してSnackBarでユーザーに通知します。
- * 特殊エラーハンドリング:
-   * CORS/ネットワークエラー: Web環境でのブラウザセキュリティ制限
-   * SocketException/TimeoutException: ネットワーク接続問題
-   * 音声ファイル関連: ファイル存在確認、サイズチェック、権限問題
- * ログ出力: デバッグモード（`kDebugMode`）でのみ詳細ログを出力
+### 6.4. APIレスポンス処理とエラーハンドリング
+
+#### 6.4.1. AudioAnalysisResult データモデル
+現在の実装では、新しいBackend APIレスポンス構造に対応したデータモデルを使用しています：
+
+```dart
+class AudioAnalysisResult {
+  final String hummingTheme;      // 口ずさみから解析されたテーマ
+  final String key;               // 楽曲のキー
+  final int bpm;                  // テンポ
+  final String chords;            // コード進行（List<String>から文字列に変換）
+  final String genre;             // ジャンル
+  final String? backingTrackUrl;  // バッキングトラックMusicXML URL
+  final String? generatedMp3Url;  // 生成されたMP3ファイルURL
+  final bool isRetried;           // リトライフラグ
+
+  factory AudioAnalysisResult.fromJson(Map<String, dynamic> json) {
+    final analysisData = json['analysis'] as Map<String, dynamic>?;
+    
+    return AudioAnalysisResult(
+      hummingTheme: json['humming_theme'] ?? 'AI解析中...',
+      key: analysisData?['key'] ?? 'Unknown',
+      bpm: analysisData?['bpm'] ?? 0,
+      chords: (analysisData?['chords'] as List<dynamic>?)?.join(' | ') ?? 'Unknown',
+      genre: analysisData?['genre'] ?? 'Unknown',
+      backingTrackUrl: json['backing_track_url'],
+      generatedMp3Url: json['generated_mp3_url'],
+    );
+  }
+}
+```
+
+#### 6.4.2. リトライ機能付き音声処理
+実装では、音声処理の信頼性を高めるためリトライ機能を搭載：
+
+```dart
+static Future<AudioAnalysisResult?> uploadAndProcessWithRetry(
+  String? filePath, {
+  Uint8List? webAudioData,
+  Function(bool)? onRetryStatusChanged,
+}) async {
+  // 初回処理試行
+  final result = await uploadAndProcess(filePath, webAudioData: webAudioData);
+  
+  // MP3生成に失敗した場合のリトライロジック
+  if (result != null && result.generatedMp3Url == null) {
+    onRetryStatusChanged?.call(true);
+    final retryResult = await uploadAndProcess(filePath, webAudioData: webAudioData);
+    // ...
+  }
+}
+```
+
+## 7. パッケージ名とAndroid設定
+
+### 7.1. アプリケーション識別情報
+現在の実装では、以下のパッケージ名とアプリケーション設定を使用しています：
+
+* **パッケージ名**: `com.sessionmuse.aimusic` (以前の `com.example.flutter_application` から変更)
+* **アプリ名**: `Session MUSE`
+* **バージョン**: `1.0.0` (ビルドコード: 1)
+
+### 7.2. Android固有設定
+
+#### 7.2.1. AndroidManifest.xml
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <application
+        android:label="Session MUSE"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <!-- Activity設定 -->
+    </application>
+</manifest>
+```
+
+#### 7.2.2. build.gradle.kts設定
+```kotlin
+android {
+    namespace = "com.sessionmuse.aimusic"
+    compileSdk = flutter.compileSdkVersion
+    
+    defaultConfig {
+        applicationId = "com.sessionmuse.aimusic"
+        minSdk = 21
+        targetSdk = flutter.targetSdkVersion
+        versionCode = 1
+        versionName = "1.0.0"
+    }
+}
+```
+
+### 7.3. デバッグ用スクリプト
+Android実機テスト用のデバッグスクリプト (`debug_android.sh`) では、正しいパッケージ名を使用：
+
+```bash
+APP_PACKAGE="com.sessionmuse.aimusic"
+```
 
 ## 8. プラットフォーム固有実装
 
