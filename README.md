@@ -32,9 +32,16 @@ Session MUSEは、鼻歌や楽器演奏をAIが解析し、リアルタイムで
 - **AI**: Gemini 2.5 Flash Lite Preview (Vertex AI)
 - **Infrastructure**: Google Cloud Platform + Terraform
 
-## 📱 Android APK
+## 🚀 クイックスタート
 
-ビルド済みのAndroid APKファイルをすぐにお試しいただけます：
+### 🌐 Google Chrome版
+
+以下のURLからすぐにお試しいただけます：
+- https://sessionmuse-frontend-469350304561.us-east5.run.app
+
+### 📱 Android APK版
+
+ビルド済みのAndroid APKファイルもすぐにお試しいただけます：
 
 - [**SessionMUSE-release.apk**](build/android/SessionMUSE-release.apk) (23.5MB) - リリース版
 
@@ -43,52 +50,16 @@ Session MUSEは、鼻歌や楽器演奏をAIが解析し、リアルタイムで
 2. Android設定 > セキュリティで「不明なソース」を有効化
 3. ダウンロードしたAPKファイルをタップしてインストール
 
-## 🚀 クイックスタート
-
-### Frontend (Flutter App)
-```bash
-cd frontend/flutter_application
-flutter pub get
-flutter run
-```
-
-### Backend (FastAPI)
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload
-```
-
-詳細なセットアップ手順は各ディレクトリのREADMEを参照してください。
-
-## 📁 プロジェクト構成
-
-```
-├── frontend/flutter_application/  # Flutterアプリ
-├── backend/                      # FastAPIバックエンド
-├── infrastructure/               # Terraformインフラ設定
-├── story.md                     # 開発ストーリー
-└── SECURITY.md                  # セキュリティガイドライン
-```
+## 🎥 デモンストレーション
+- https://youtu.be/29eVG9dW0fA
 
 ## 🏆 ハッカソン成果
 
+### 🥇 技術革新
 - **Gemini 2.5 Flash Lite Preview活用**: 鼻歌から直接楽曲制作するAIを実現
 - **堅牢なアーキテクチャ**: Cloud RunとLangGraphによるサーバーレス・ワークフロー駆動型設計
 - **クロスプラットフォーム**: Flutter による高効率なマルチプラットフォーム対応
 
-## 📖 詳細ドキュメント
-
-- [📱 Flutter App Documentation](frontend/flutter_application/README.md)
-- [🔧 Backend API Documentation](backend/README.md)
-- [📚 Development Story](story.md)
-- [🔒 Security Guidelines](SECURITY.md)
-
-
 ## 📄 ライセンス
 
 このプロジェクトはMITライセンスの下で公開されています。
-
----
-
-**もう、曲作りで孤独じゃない。**
