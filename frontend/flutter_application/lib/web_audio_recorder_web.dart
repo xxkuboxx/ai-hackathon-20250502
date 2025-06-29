@@ -561,56 +561,180 @@ class WebAudioRecorderWeb {
         print('Web audio playback started - playing from URL: $url');
       }
 
-      // URLから音声を再生
-      _audioElement = html.AudioElement(url);
-      _audioElement!.volume = 0.7; // 70%の音量
-      _audioElement!.crossOrigin = 'anonymous'; // CORS対応
-
-      // 再生完了を監視
-      _audioElement!.onEnded.listen((_) {
-        _isPlaying = false;
-        _playbackStateController.add(false);
-        _audioElement = null;
-        if (kDebugMode) {
-          print('Web audio playback completed (URL audio)');
-        }
-      });
-
-      // エラーハンドリング
-      _audioElement!.onError.listen((error) {
-        if (kDebugMode) {
-          print('Audio playback error: $error');
-        }
-        _isPlaying = false;
-        _playbackStateController.add(false);
-        _audioElement = null;
-      });
-
-      // 再生開始
-      await _audioElement!.play();
-      if (kDebugMode) {
-        print('Started playing from URL: $url');
-      }
-
-      // フォールバックタイマー（300秒後に強制停止）
-      _playbackTimer = Timer(const Duration(seconds: 300), () {
-        if (_isPlaying && _audioElement != null) {
-          _audioElement!.pause();
-          _audioElement = null;
-          _isPlaying = false;
-          _playbackStateController.add(false);
-          if (kDebugMode) {
-            print('Audio playback timeout (300s)');
-          }
-        }
-      });
+      // まずダイレクト再生を試行
+      await _tryDirectPlayback(url);
     } catch (e) {
       if (kDebugMode) {
-        print('Failed to play audio from URL: $e');
+        print('Direct playback failed: $e');
+        print('Trying fetch + blob approach...');
       }
+      
+      // ダイレクト再生に失敗した場合、fetch + blob を試行
+      try {
+        await _tryFetchAndPlay(url);
+      } catch (e2) {
+        if (kDebugMode) {
+          print('Fetch and play also failed: $e2');
+          print('Falling back to URL download prompt...');
+        }
+        
+        // 両方失敗した場合は、URLを表示してユーザーに直接アクセスしてもらう
+        _isPlaying = false;
+        _playbackStateController.add(false);
+        _audioElement = null;
+        
+        // URLをコンソールに表示（開発者向け）
+        if (kDebugMode) {
+          print('Audio playback failed completely. URL: $url');
+        }
+        
+        // ブラウザで新しいタブでURLを開く（ユーザー操作後）
+        _showUrlFallback(url);
+      }
+    }
+  }
+
+  Future<void> _tryDirectPlayback(String url) async {
+    _audioElement = html.AudioElement(url);
+    _audioElement!.volume = 0.7;
+    _audioElement!.preload = 'auto';
+    
+    // CORS設定を試行
+    try {
+      _audioElement!.crossOrigin = 'anonymous';
+    } catch (e) {
+      if (kDebugMode) {
+        print('CrossOrigin setting failed, trying without: $e');
+      }
+    }
+
+    // エラーハンドリング
+    final errorCompleter = Completer<void>();
+    _audioElement!.onError.listen((error) {
+      if (kDebugMode) {
+        print('Direct audio playback error: $error');
+      }
+      if (!errorCompleter.isCompleted) {
+        errorCompleter.completeError('Audio load failed');
+      }
+    });
+
+    // 読み込み完了
+    _audioElement!.onCanPlay.listen((_) {
+      if (!errorCompleter.isCompleted) {
+        errorCompleter.complete();
+      }
+    });
+
+    // 再生完了を監視
+    _audioElement!.onEnded.listen((_) {
       _isPlaying = false;
       _playbackStateController.add(false);
       _audioElement = null;
+      if (kDebugMode) {
+        print('Web audio playback completed (direct URL)');
+      }
+    });
+
+    // タイムアウト設定
+    final timeoutCompleter = Completer<void>();
+    Timer(const Duration(seconds: 10), () {
+      if (!timeoutCompleter.isCompleted) {
+        timeoutCompleter.completeError('Load timeout');
+      }
+    });
+
+    // 読み込み待ち（エラーまたは完了まで）
+    await Future.any([errorCompleter.future, timeoutCompleter.future]);
+
+    // 再生開始
+    await _audioElement!.play();
+    if (kDebugMode) {
+      print('Started playing from URL (direct): $url');
+    }
+
+    // フォールバックタイマー（300秒後に強制停止）
+    _playbackTimer = Timer(const Duration(seconds: 300), () {
+      if (_isPlaying && _audioElement != null) {
+        _audioElement!.pause();
+        _audioElement = null;
+        _isPlaying = false;
+        _playbackStateController.add(false);
+        if (kDebugMode) {
+          print('Audio playback timeout (300s)');
+        }
+      }
+    });
+  }
+
+  Future<void> _tryFetchAndPlay(String url) async {
+    // fetchでデータを取得してblobとして再生
+    final response = await html.window.fetch(url, {
+      'mode': 'cors',
+      'credentials': 'omit',
+    });
+
+    if (response.status != 200) {
+      throw Exception('Fetch failed with status: ${response.status}');
+    }
+
+    final blob = await response.blob();
+    final blobUrl = html.Url.createObjectUrlFromBlob(blob);
+
+    _audioElement = html.AudioElement(blobUrl);
+    _audioElement!.volume = 0.7;
+
+    // 再生完了を監視
+    _audioElement!.onEnded.listen((_) {
+      html.Url.revokeObjectUrl(blobUrl); // メモリリークを防ぐ
+      _isPlaying = false;
+      _playbackStateController.add(false);
+      _audioElement = null;
+      if (kDebugMode) {
+        print('Web audio playback completed (fetch + blob)');
+      }
+    });
+
+    // エラーハンドリング
+    _audioElement!.onError.listen((error) {
+      if (kDebugMode) {
+        print('Blob audio playback error: $error');
+      }
+      html.Url.revokeObjectUrl(blobUrl);
+      _isPlaying = false;
+      _playbackStateController.add(false);
+      _audioElement = null;
+    });
+
+    // 再生開始
+    await _audioElement!.play();
+    if (kDebugMode) {
+      print('Started playing from URL (fetch + blob): $url');
+    }
+
+    // フォールバックタイマー（300秒後に強制停止）
+    _playbackTimer = Timer(const Duration(seconds: 300), () {
+      if (_isPlaying && _audioElement != null) {
+        _audioElement!.pause();
+        html.Url.revokeObjectUrl(blobUrl);
+        _audioElement = null;
+        _isPlaying = false;
+        _playbackStateController.add(false);
+        if (kDebugMode) {
+          print('Audio playback timeout (300s)');
+        }
+      }
+    });
+  }
+
+  void _showUrlFallback(String url) {
+    // ユーザーがクリックで新しいタブでURLを開けるよう、ボタンなどのUIを提供する必要がある
+    // ここでは開発者コンソールにURLを表示
+    if (kDebugMode) {
+      print('=== AUDIO PLAYBACK FALLBACK ===');
+      print('Please manually open this URL in a new tab to play the audio:');
+      print(url);
+      print('===============================');
     }
   }
 
