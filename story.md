@@ -87,7 +87,7 @@ Session MUSEが単なる自動作曲ツールと一線を画すのが、この�
 
 ## 3. デモンストレーション
 
-[![video](https://www.youtube.com/shorts/y03-XEM2ZXc)](https://www.youtube.com/shorts/y03-XEM2ZXc)
+https://www.youtube.com/watch?v=29eVG9dW0fA
 
 ### シナリオ：ユーザー「Takeshi」の創作セッション
 
@@ -127,4 +127,4 @@ Session MUSEが単なる自動作曲ツールと一線を画すのが、この�
 
 「人間の創造する力がAI Agentによって格段に向上することを実感しました。この可能性は無限大で、今後さらに面白い物が生まれることを確信しています。」 by Keisuke Karijuku
 
-「」 by Takafumi Kubota
+「音楽×AIの領域にまだまだ大きな伸びしろを感じました。今後この分野がより盛り上がっていくことを期待しています。」 by Takafumi Kubota
