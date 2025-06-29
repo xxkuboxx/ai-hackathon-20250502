@@ -105,8 +105,6 @@ Session MUSEが単なる自動作曲ツールと一線を画すのが、この�
 |![image](screenshot/iOS/screenshot2.PNG)|![image](screenshot/iOS/screenshot3.PNG)|![image](screenshot/iOS/screenshot4.PNG)|![image](screenshot/iOS/screenshot5.PNG)|
 |:---:|:---:|:---:|:---:|
 
-**所要時間：約4分** (鼻歌アップロードから最終成果物まで)
-
 ## 4. 技術的挑戦と学び
 
 ### ハッカソンにおける挑戦
