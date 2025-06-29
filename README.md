@@ -32,6 +32,18 @@ Session MUSEは、鼻歌や楽器演奏をAIが解析し、リアルタイムで
 - **AI**: Gemini 2.5 Flash Lite Preview (Vertex AI)
 - **Infrastructure**: Google Cloud Platform + Terraform
 
+## 📱 Android APK
+
+ビルド済みのAndroid APKファイルをすぐにお試しいただけます：
+
+- [**SessionMUSE-release.apk**](build/android/SessionMUSE-release.apk) (23.5MB) - リリース版
+- [**SessionMUSE-debug.apk**](build/android/SessionMUSE-debug.apk) (95.6MB) - デバッグ版
+
+### インストール方法
+1. 上記リンクからAPKファイルをダウンロード
+2. Android設定 > セキュリティで「不明なソース」を有効化
+3. ダウンロードしたAPKファイルをタップしてインストール
+
 ## 🚀 クイックスタート
 
 ### Frontend (Flutter App)
