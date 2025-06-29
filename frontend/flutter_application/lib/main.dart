@@ -52,7 +52,7 @@ class AudioAnalysisResult {
     return AudioAnalysisResult(
       hummingTheme: json['humming_theme'] ?? 'AI解析中...',
       key: analysisData?['key'] ?? 'Unknown',
-      bpm: analysisData?['bpm'] ?? 'Unknown',
+      bpm: analysisData?['bpm'] ?? 0,
       chords: (analysisData?['chords'] as List<dynamic>?)?.join(' | ') ?? 'Unknown',
       genre: analysisData?['genre'] ?? 'Unknown',
       backingTrackUrl: json['backing_track_url'],
