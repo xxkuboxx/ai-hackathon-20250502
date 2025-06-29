@@ -2059,16 +2059,22 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            Colors.deepPurple.shade50,
-            Colors.indigo.shade50,
-            Colors.blue.shade50,
-          ],
+          colors: _isAnalyzed
+              ? [
+                  Colors.deepPurple.shade50,
+                  Colors.indigo.shade50,
+                  Colors.blue.shade50,
+                ]
+              : [
+                  Colors.grey.shade50,
+                  Colors.blueGrey.shade50,
+                  Colors.grey.shade100,
+                ],
         ),
         borderRadius: BorderRadius.circular(24.0),
         boxShadow: [
           BoxShadow(
-            color: Colors.deepPurple.withValues(alpha: 0.15),
+            color: (_isAnalyzed ? Colors.deepPurple : Colors.grey).withValues(alpha: 0.15),
             blurRadius: 24,
             offset: const Offset(0, 12),
             spreadRadius: 0,
@@ -2097,15 +2103,20 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [
-                        Colors.deepPurple.shade600,
-                        Colors.indigo.shade600,
-                      ],
+                      colors: _isAnalyzed
+                          ? [
+                              Colors.deepPurple.shade600,
+                              Colors.indigo.shade600,
+                            ]
+                          : [
+                              Colors.grey.shade500,
+                              Colors.blueGrey.shade500,
+                            ],
                     ),
                     borderRadius: BorderRadius.circular(16),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.deepPurple.withValues(alpha: 0.3),
+                        color: (_isAnalyzed ? Colors.deepPurple : Colors.grey).withValues(alpha: 0.3),
                         blurRadius: 8,
                         offset: const Offset(0, 4),
                       ),
@@ -2141,11 +2152,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 ),
               ),
               const SizedBox(height: 20),
-              // テーマ表示
-              if (_isAnalyzed && _analysisResult?.hummingTheme != null) ...[
-                _buildThemeDisplay(),
-                const SizedBox(height: 16),
-              ],
+              // テーマ表示（常に表示、解析前はグレーアウト）
+              _buildThemeDisplay(),
+              const SizedBox(height: 16),
               _isAnalyzed 
                 ? GridView.count(
                     shrinkWrap: true,
@@ -2955,9 +2964,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 ),
               ],
             ),
-            child: const Center(
+            child: Center(
               child: CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.grey.shade600),
                 strokeWidth: 3,
               ),
             ),
@@ -2969,7 +2978,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w600,
-              color: Colors.deepPurple.shade700,
+              color: Colors.grey.shade700,
               letterSpacing: 0.5,
             ),
           ),
@@ -3085,20 +3094,26 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            Colors.indigo.shade50,
-            Colors.purple.shade50,
-            Colors.pink.shade50,
-          ],
+          colors: _isAnalyzed
+              ? [
+                  Colors.indigo.shade50,
+                  Colors.purple.shade50,
+                  Colors.pink.shade50,
+                ]
+              : [
+                  Colors.grey.shade50,
+                  Colors.blueGrey.shade50,
+                  Colors.grey.shade100,
+                ],
         ),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: Colors.indigo.shade100,
+          color: (_isAnalyzed ? Colors.indigo.shade100 : Colors.grey.shade200),
           width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.indigo.withValues(alpha: 0.1),
+            color: (_isAnalyzed ? Colors.indigo : Colors.grey).withValues(alpha: 0.1),
             blurRadius: 15,
             offset: const Offset(0, 4),
           ),
@@ -3112,22 +3127,22 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Colors.indigo.shade500,
+                  color: _isAnalyzed ? Colors.indigo.shade500 : Colors.grey.shade400,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(
-                  Icons.color_lens,
+                child: Icon(
+                  _isAnalyzed ? Icons.color_lens : Icons.schedule,
                   color: Colors.white,
                   size: 20,
                 ),
               ),
               const SizedBox(width: 12),
-              const Text(
-                'ハミング解析テーマ',
+              Text(
+                _isAnalyzed ? 'ハミング解析テーマ' : 'ハミング解析中...',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
-                  color: Colors.indigo,
+                  color: _isAnalyzed ? Colors.indigo : Colors.grey.shade600,
                   letterSpacing: 0.5,
                 ),
               ),
@@ -3135,10 +3150,12 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 12),
           Text(
-            _analysisResult?.hummingTheme ?? 'テーマ情報なし',
+            _isAnalyzed 
+                ? (_analysisResult?.hummingTheme ?? 'テーマ情報なし')
+                : '音声解析を実行中です。あなたのハミングからテーマを抽出しています...',
             style: TextStyle(
               fontSize: 14,
-              color: Colors.indigo.shade700,
+              color: _isAnalyzed ? Colors.indigo.shade700 : Colors.grey.shade600,
               height: 1.4,
               fontWeight: FontWeight.w500,
             ),
