@@ -16,15 +16,7 @@ Session MUSEは、鼻歌や楽器演奏をAIが解析し、リアルタイムで
 
 ## 🏗️ アーキテクチャ
 
-```
-📱 Flutter App (Frontend)
-    ↓ 音声アップロード
-☁️  Cloud Run (Backend - FastAPI)
-    ↓ AI処理
-🧠 Vertex AI (Gemini 2.5 Flash Lite Preview)
-    ↓ 楽曲生成
-🎵 MusicXML → MIDI → MP3
-```
+![SessionMUSE Architecture](architecture.png)
 
 ### 技術スタック
 - **Frontend**: Flutter (クロスプラットフォーム対応)
