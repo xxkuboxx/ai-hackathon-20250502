@@ -52,7 +52,7 @@ class AudioAnalysisResult {
     return AudioAnalysisResult(
       hummingTheme: json['humming_theme'] ?? 'AI解析中...',
       key: analysisData?['key'] ?? 'Unknown',
-      bpm: analysisData?['bpm'] ?? 120,
+      bpm: analysisData?['bpm'] ?? 'Unknown',
       chords: (analysisData?['chords'] as List<dynamic>?)?.join(' | ') ?? 'Unknown',
       genre: analysisData?['genre'] ?? 'Unknown',
       backingTrackUrl: json['backing_track_url'],
@@ -429,8 +429,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     // 初期状態で解析結果を表示
     _isAnalyzed = true;
 
-    // Android版では常に制限モードから開始（永続化しない）
-    if (Platform.isAndroid) {
+    // Web版以外では常に制限モードから開始（永続化しない）
+    if (!kIsWeb) {
       _isApiAccessEnabled = false;
       _apiAccessExpiry = null;
     }
@@ -453,8 +453,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       return;
     }
 
-    // Android版でAPI認証チェック
-    if (Platform.isAndroid && !_isApiAccessAllowed()) {
+    // API認証チェック
+    if (!_isApiAccessAllowed()) {
       if (mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -771,8 +771,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       return;
     }
 
-    // Android版でAPI認証チェック
-    if (Platform.isAndroid && !_isApiAccessAllowed()) {
+    // API認証チェック
+    if (!_isApiAccessAllowed()) {
       if (mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1349,10 +1349,10 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     }
   }
 
-  // Android版API認証関連メソッド（永続化なし）
+  // API認証関連メソッド（永続化なし）
 
   void _onLogoTap() {
-    if (!Platform.isAndroid) return;
+    if (kIsWeb) return;
     
     setState(() {
       _logoTapCount++;
@@ -1376,7 +1376,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   }
 
   void _enableApiAccess() {
-    if (!Platform.isAndroid) return;
+    if (kIsWeb) return;
     
     final now = DateTime.now();
     final expiry = now.add(const Duration(hours: 2));
@@ -1400,7 +1400,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   }
 
   bool _isApiAccessAllowed() {
-    if (!Platform.isAndroid) return true; // Web/iOS版では制限なし
+    if (kIsWeb) return true; // Web版では制限なし
     
     if (!_isApiAccessEnabled || _apiAccessExpiry == null) {
       return false;
@@ -1491,7 +1491,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                     letterSpacing: 0.5,
                   ),
                 ),
-                if (Platform.isAndroid)
+                if (!kIsWeb)
                   Text(
                     _isApiAccessEnabled 
                         ? '🔓 フル機能利用中'
