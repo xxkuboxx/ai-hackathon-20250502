@@ -31,12 +31,12 @@ graph TD
         direction TB
 
         subgraph "Frontend Distribution"
-            CR_Web["Cloud Run\nsessionmuse-web\n(Flutter Web Build)\nリージョン：asia-northeast1"]
+            CR_Web["Cloud Run\nsessionmuse-web\n(Flutter Web Build)\nリージョン：us-east5"]
             CDN["Cloud CDN\n(Flutter Assets)"]
         end
 
         subgraph "AI Processing Backend"
-            CR_Backend["Cloud Run\nsessionmuse-backend\n(FastAPI + LangGraph)\nGemini 2.5 Flash Lite\nリージョン：asia-northeast1"]
+            CR_Backend["Cloud Run\nsessionmuse-backend\n(FastAPI + LangGraph)\nGemini 2.5 Flash Lite\nリージョン：us-east5"]
             
             subgraph "LangGraph Workflow Engine"
                 LG_Analyzer["🎵 Audio Analysis Node\n(Theme Extraction)"]
@@ -159,7 +159,7 @@ flowchart TD
         direction TB
         
         subgraph "Container Registry"
-            ArtifactRegistry["📦 Artifact Registry\nasia-northeast1-docker.pkg.dev"]
+            ArtifactRegistry["📦 Artifact Registry\nus-east5-docker.pkg.dev"]
         end
         
         subgraph "Cloud Run Services"
@@ -358,7 +358,7 @@ flowchart TD
 #### 3.1.1. Web アプリケーション (Cloud Run)
 
 *   **サービス名**: `sessionmuse-web`
-*   **リージョン**: `asia-northeast1` (東京)
+*   **リージョン**: `us-east5` (サウスカロライナ)
 *   **テクノロジー**: Flutter Web ビルド + Nginxリバースプロキシ
 *   **コンテナイメージ**: Flutter Web ビルド成果物を nginx で配信する軽量コンテナ
 *   **サービスアカウント**: `sa-web@<project-id>.iam.gserviceaccount.com`
@@ -370,7 +370,7 @@ flowchart TD
     *   **メモリ**: 512MiB (静的配信なので軽量)
     *   **リクエストタイムアウト**: 30秒
 *   **環境変数**:
-    *   `BACKEND_API_ENDPOINT`: `https://sessionmuse-backend-xxxx-an.a.run.app`
+    *   `BACKEND_API_ENDPOINT`: `https://sessionmuse-backend-469350304561.us-east5.run.app`
     *   `FLUTTER_WEB_BUILD_MODE`: `release`
 *   **Dockerfile (Flutter Web最適化)**:
     ```dockerfile
@@ -412,7 +412,7 @@ flowchart TD
 ### 3.2. 次世代AIバックエンド (Cloud Run + LangGraph)
 
 *   **サービス名**: `sessionmuse-backend`
-*   **リージョン**: `asia-northeast1` (東京)
+*   **リージョン**: `us-east5` (サウスカロライナ)
 *   **アーキテクチャ**: FastAPI + LangGraph ワークフロー + Gemini 2.5 Flash Lite Preview
 *   **コンテナイメージ**: Python 3.11 + 音楽処理ライブラリ統合イメージ
 *   **サービスアカウント**: `sa-backend@<project-id>.iam.gserviceaccount.com`
@@ -523,7 +523,7 @@ def create_audio_analysis_workflow():
 *   **バケット**:
     *   `sessionmuse-uploads-your-project-id` (ユーザーのアップロード音声用)
     *   `sessionmuse-tracks-your-project-id` (AIが生成したバッキングトラック用)
-*   **ロケーション**: `asia-northeast1` (東京)
+*   **ロケーション**: `us-east5` (サウスカロライナ)
 *   **ストレージクラス**: Standard (頻繁なアクセスを想定)
 *   **アクセス制御 (IAM)**:
     *   バックエンドCloud Runのサービスアカウント (`sa-backend@<project-id>.iam.gserviceaccount.com`) に対して、両バケットの **ストレージオブジェクト管理者** (`roles/storage.objectAdmin`) ロールを付与します。
@@ -862,7 +862,7 @@ SessionMUSEの事業継続性とデータ保護のための包括的な災害復
 
 ```mermaid
 flowchart TD
-    subgraph "Primary Region (asia-northeast1)"
+    subgraph "Primary Region (us-east5)"
         direction TB
         
         subgraph "Production Environment"
