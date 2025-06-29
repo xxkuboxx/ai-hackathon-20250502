@@ -84,16 +84,6 @@ Session MUSEが単なる自動作曲ツールと一線を画すのが、この�
 -   **生成AI活用**: 楽曲のコアとなる「雰囲気の抽出」と「MusicXML生成」は、Vertex AI上のGeminiが担います。
 -   **CI/CDとIaC**: Terraformでインフラをコード管理し、Cloud BuildとArtifact RegistryによるCI/CDパイプライン経由でCloud Runへ自動デプロイします。
 
-### 技術スタック詳細
-| 技術領域 | 主要技術 | 選定理由 |
-|:---|:---|:---|
-| AI | Gemini 2.5 Flash Lite Preview | 音声ネイティブ入力とVertex AIによるスケーラブルな利用 |
-| フロントエンド | Flutter | 高効率なマルチプラットフォーム開発と統一されたUX |
-| バックエンド | FastAPI (Python) | 非同期による高性能APIを迅速に開発可能。豊富なAI・音声ライブラリと好相性 |
-| バックエンド | LangGraph | 複雑なAIワークフローの堅牢な状態管理 |
-| インフラ | Cloud Run | 高コスト効率なサーバーレス実行環境 |
-| DevOps | Cloud Build, Terraform | CI/CDとIaCによる開発の自動化・高速化 |
-
 ## 3. デモンストレーション
 「「「「「「ここに動画を挿入」」」」」」
 
