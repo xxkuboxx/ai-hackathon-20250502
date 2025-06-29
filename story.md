@@ -79,14 +79,15 @@ Session MUSEが単なる自動作曲ツールと一線を画すのが、この�
 ### システムアーキテクチャ
 このAIパイプラインは、以下のGoogle Cloudサービス群を組み合わせたイベント駆動型アーキテクチャで実現しています。
 
-![architecture](architecture.png)
+![image](architecture.png)
 
 -   **メイン処理**: Cloud Run上のFastAPIがリクエストを受け付け、LangGraphが上記パイプラインの一連の処理を非同期ワークフローとして管理します。
 -   **生成AI活用**: 楽曲のコアとなる「雰囲気の抽出」と「MusicXML生成」は、Vertex AI上のGeminiが担います。
 -   **CI/CDとIaC**: Terraformでインフラをコード管理し、Cloud BuildとArtifact RegistryによるCI/CDパイプライン経由でCloud Runへ自動デプロイします。
 
 ## 3. デモンストレーション
-「「「「「「ここに動画を挿入」」」」」」
+
+![video](video/demo_compressed.mp4)
 
 ### シナリオ：ユーザー「Takeshi」の創作セッション
 
