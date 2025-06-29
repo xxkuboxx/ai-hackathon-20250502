@@ -1,11 +1,11 @@
 {
   "record_button": {
-    "x": 655,
-    "y": 2160
+    "x": 106,
+    "y": 364
   },
   "chat_button": {
-    "x": 975,
-    "y": 2295
+    "x": 572,
+    "y": 1451
   },
   "settings_button": {
     "x": 50,
