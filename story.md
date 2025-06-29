@@ -87,7 +87,7 @@ Session MUSEが単なる自動作曲ツールと一線を画すのが、この�
 
 ## 3. デモンストレーション
 
-![video](video/demo_speed_adjusted.mp4)
+[![video](https://www.youtube.com/shorts/y03-XEM2ZXc)](https://www.youtube.com/shorts/y03-XEM2ZXc)
 
 ### シナリオ：ユーザー「Takeshi」の創作セッション
 
