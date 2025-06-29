@@ -370,7 +370,7 @@ flowchart TD
     *   **メモリ**: 512MiB (静的配信なので軽量)
     *   **リクエストタイムアウト**: 30秒
 *   **環境変数**:
-    *   `BACKEND_API_ENDPOINT`: `https://sessionmuse-backend-469350304561.us-east5.run.app`
+    *   `BACKEND_API_ENDPOINT`: `https://sessionmuse-backend-xxxx.us-east5.run.app`
     *   `FLUTTER_WEB_BUILD_MODE`: `release`
 *   **Dockerfile (Flutter Web最適化)**:
     ```dockerfile
