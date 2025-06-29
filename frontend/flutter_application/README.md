@@ -305,7 +305,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 ### ビルド済みAPKファイル
 プロジェクトには事前にビルドされたAndroid APKファイルが含まれています：
 
-- **`../../build/android/SessionMUSE-release.apk`** (23.5MB) - リリース版、配布用最適化済み
 - **`../../build/android/SessionMUSE-debug.apk`** (95.6MB) - デバッグ版、開発シンボル付き
 
 ### パッケージ情報

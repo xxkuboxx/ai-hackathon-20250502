@@ -1,9 +1,8 @@
 # Android APK Builds
 
-This directory contains the built Android APK files for SessionMUSE.
+This directory contains the built Android APK file for SessionMUSE.
 
 ## Files
-- **SessionMUSE-release.apk** (23.5MB) - Release version, optimized and ready for distribution
 - **SessionMUSE-debug.apk** (95.6MB) - Debug version with development symbols
 
 ## Installation
