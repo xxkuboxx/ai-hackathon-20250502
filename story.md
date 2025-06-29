@@ -100,7 +100,7 @@ Session MUSEが単なる自動作曲ツールと一線を画すのが、この�
 
 #### 実際の画面フロー
 
-|鼻歌録音|AI解析|バッキング生成|AI対話|
+|  |  |  |  |
 |:---:|:---:|:---:|:---:|
 |![鼻歌録音画面](screenshot/iOS/screenshot2.PNG)|![AI解析結果画面](screenshot/iOS/screenshot3.PNG)|![バッキングトラック生成画面](screenshot/iOS/screenshot4.PNG)|![AI対話画面](screenshot/iOS/screenshot5.PNG)|
 
