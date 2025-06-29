@@ -5,10 +5,12 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' as http_parser;
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:math' as math;
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/services.dart';
 import 'file_operations_io.dart'
     if (dart.library.html) 'file_operations_web.dart';
 import 'web_audio_recorder.dart'
@@ -23,27 +25,60 @@ enum RecordingState {
 
 // API応答データモデル
 class AudioAnalysisResult {
+  final String hummingTheme;
   final String key;
   final int bpm;
   final String chords;
   final String genre;
   final String? backingTrackUrl;
+  final String? generatedMp3Url;
+  final bool isRetried;
 
   AudioAnalysisResult({
+    required this.hummingTheme,
     required this.key,
     required this.bpm,
     required this.chords,
     required this.genre,
     this.backingTrackUrl,
+    this.generatedMp3Url,
+    this.isRetried = false,
   });
 
   factory AudioAnalysisResult.fromJson(Map<String, dynamic> json) {
+    // 新しいBackend APIレスポンス構造に対応
+    final analysisData = json['analysis'] as Map<String, dynamic>?;
+    
     return AudioAnalysisResult(
-      key: json['key'] ?? 'Unknown',
-      bpm: json['bpm'] ?? 120,
-      chords: json['chords'] ?? 'Unknown',
-      genre: json['genre'] ?? 'Unknown',
-      backingTrackUrl: json['generated_mp3_url'],
+      hummingTheme: json['humming_theme'] ?? 'AI解析中...',
+      key: analysisData?['key'] ?? 'Unknown',
+      bpm: analysisData?['bpm'] ?? 120,
+      chords: (analysisData?['chords'] as List<dynamic>?)?.join(' | ') ?? 'Unknown',
+      genre: analysisData?['genre'] ?? 'Unknown',
+      backingTrackUrl: json['backing_track_url'],
+      generatedMp3Url: json['generated_mp3_url'],
+    );
+  }
+
+  AudioAnalysisResult copyWith({
+    String? hummingTheme,
+    String? key,
+    int? bpm,
+    String? chords,
+    String? genre,
+    String? backingTrackUrl,
+    String? generatedMp3Url,
+    bool? isRetried,
+  }) {
+    return AudioAnalysisResult(
+      hummingTheme: hummingTheme ?? this.hummingTheme,
+      key: key ?? this.key,
+      bpm: bpm ?? this.bpm,
+      chords: chords ?? this.chords,
+      genre: genre ?? this.genre,
+      backingTrackUrl: backingTrackUrl ?? this.backingTrackUrl,
+      generatedMp3Url: generatedMp3Url ?? this.generatedMp3Url,
+      isRetried: isRetried ?? this.isRetried,
     );
   }
 }
@@ -129,6 +164,56 @@ class AudioProcessingService {
       }
     } catch (e) {
       if (kDebugMode) print('Upload Error: $e');
+      return null;
+    }
+  }
+
+  // リトライ機能付きアップロード処理
+  static Future<AudioAnalysisResult?> uploadAndProcessWithRetry(
+    String filePath, {
+    Uint8List? webAudioData,
+    Function(bool isRetrying)? onRetryStatusChanged,
+  }) async {
+    // 初回試行
+    if (kDebugMode) print('初回音声解析を開始します');
+    onRetryStatusChanged?.call(false);
+    
+    AudioAnalysisResult? result = await uploadAndProcess(
+      filePath,
+      webAudioData: webAudioData,
+    );
+    
+    // 初回成功の場合、MP3 URLが生成されているかチェック
+    if (result != null && result.generatedMp3Url != null && result.generatedMp3Url!.isNotEmpty) {
+      if (kDebugMode) print('初回解析が成功しました（MP3生成完了）');
+      return result;
+    }
+    
+    // 初回でMP3生成が失敗している場合、リトライ実行
+    if (kDebugMode) print('MP3生成に失敗しました。リトライを実行します...');
+    onRetryStatusChanged?.call(true);
+    
+    // 2秒待機してからリトライ
+    await Future.delayed(const Duration(seconds: 2));
+    
+    AudioAnalysisResult? retryResult = await uploadAndProcess(
+      filePath,
+      webAudioData: webAudioData,
+    );
+    
+    onRetryStatusChanged?.call(false);
+    
+    if (retryResult != null) {
+      // リトライ成功の場合、フラグを立てて返す
+      if (kDebugMode) print('リトライ解析が成功しました');
+      return retryResult.copyWith(isRetried: true);
+    } else {
+      // リトライも失敗した場合、初回結果があれば返す（MP3なしでも）
+      if (result != null) {
+        if (kDebugMode) print('リトライも失敗しましたが、初回結果を返します');
+        return result.copyWith(isRetried: true);
+      }
+      if (kDebugMode) print('初回・リトライ共に失敗しました');
       return null;
     }
   }
@@ -261,6 +346,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   // API分析結果
   AudioAnalysisResult? _analysisResult;
 
+  // リトライ状態管理
+  bool _isRetrying = false;
+
   // プレイヤー状態リスナー管理
   bool _playerListenerAdded = false;
 
@@ -271,6 +359,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   late final PlayerController? backingTrackController;
   bool _isBackingTrackPlaying = false;
   bool _backingTrackListenerAdded = false;
+
 
   @override
   void initState() {
@@ -303,12 +392,22 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       _webAudioRecorder!.checkPermission();
     } else {
       // モバイル環境
-      _recorderController = RecorderController();
-      playerController = PlayerController();
-      backingTrackController = PlayerController();
-      _webAudioRecorder = null;
-      // アプリ起動時に録音権限を取得
-      _recorderController!.checkPermission();
+      try {
+        _recorderController = RecorderController();
+        playerController = PlayerController();
+        backingTrackController = PlayerController();
+        _webAudioRecorder = null;
+        // アプリ起動時に録音権限を取得
+        _recorderController!.checkPermission();
+        if (kDebugMode) print('モバイル環境でのプレイヤー初期化が完了しました');
+      } catch (e) {
+        if (kDebugMode) print('プレイヤー初期化エラー: $e');
+        // プレイヤー初期化に失敗した場合はnullに設定
+        _recorderController = null;
+        playerController = null;
+        backingTrackController = null;
+        _webAudioRecorder = null;
+      }
     }
 
     // 初期メッセージを追加
@@ -658,9 +757,16 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         // Web環境：メモリ上のデータを使用
         final webAudioData = getWebAudioFile(_audioFilePath!);
         if (webAudioData != null) {
-          result = await AudioProcessingService.uploadAndProcess(
+          result = await AudioProcessingService.uploadAndProcessWithRetry(
             _audioFilePath!,
             webAudioData: webAudioData,
+            onRetryStatusChanged: (isRetrying) {
+              if (mounted) {
+                setState(() {
+                  _isRetrying = isRetrying;
+                });
+              }
+            },
           );
         } else {
           if (kDebugMode) print('Web音声データが見つかりません');
@@ -668,7 +774,16 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         }
       } else {
         // モバイル環境：ファイルパスを使用
-        result = await AudioProcessingService.uploadAndProcess(_audioFilePath!);
+        result = await AudioProcessingService.uploadAndProcessWithRetry(
+          _audioFilePath!,
+          onRetryStatusChanged: (isRetrying) {
+            if (mounted) {
+              setState(() {
+                _isRetrying = isRetrying;
+              });
+            }
+          },
+        );
       }
 
       // キャンセルされた場合は処理を中断
@@ -687,10 +802,13 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         _progressAnimationController.stop();
 
         if (mounted && context.mounted) {
+          String message = result.isRetried 
+            ? '音楽解析が完了しました（リトライ実行）'
+            : '音楽解析が完了しました';
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('音楽解析が完了しました'),
-              duration: Duration(seconds: 2),
+            SnackBar(
+              content: Text(message),
+              duration: const Duration(seconds: 2),
             ),
           );
         }
@@ -899,12 +1017,26 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _toggleBackingTrackPlayback() async {
-    final backingTrackUrl = _analysisResult?.backingTrackUrl;
-    if (backingTrackUrl == null || backingTrackUrl.isEmpty) {
+    // MP3ファイルを再生（音声データ）
+    final mp3Url = _analysisResult?.generatedMp3Url;
+    if (mp3Url == null || mp3Url.isEmpty) {
       if (mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('バッキングトラックが利用できません'),
+            content: Text('MP3ファイルが生成されていません'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    // URLの基本的な妥当性をチェック
+    if (!_isValidUrl(mp3Url)) {
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('MP3ファイルのURLが無効です'),
             duration: Duration(seconds: 2),
           ),
         );
@@ -914,32 +1046,41 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
     // Web環境では直接URLを再生
     if (isWeb) {
-      await _toggleWebBackingTrackPlayback(backingTrackUrl);
+      await _toggleWebBackingTrackPlayback(mp3Url);
       return;
     }
 
-    // モバイル環境でのバッキングトラック再生
+    // モバイル環境でのMP3再生
     if (backingTrackController == null) {
+      if (kDebugMode) print('BackingTrackController is null in mobile environment');
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('音声プレイヤーの初期化に失敗しました'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
       return;
     }
 
     try {
       if (_isBackingTrackPlaying) {
         // 停止
-        if (kDebugMode) print('バッキングトラック再生を停止します');
+        if (kDebugMode) print('MP3再生を停止します');
         await backingTrackController!.stopPlayer();
         setState(() {
           _isBackingTrackPlaying = false;
         });
-        if (kDebugMode) print('バッキングトラック再生が停止されました');
+        if (kDebugMode) print('MP3再生が停止されました');
       } else {
         // 再生開始
-        if (kDebugMode) print('バッキングトラック再生を開始します: $backingTrackUrl');
+        if (kDebugMode) print('MP3再生を開始します: $mp3Url');
 
         // 既存の再生を完全に停止してリセット
         try {
           await backingTrackController!.stopPlayer();
-          if (kDebugMode) print('既存のバッキングトラック再生を停止しました');
+          if (kDebugMode) print('既存のMP3再生を停止しました');
         } catch (e) {
           if (kDebugMode) print('停止時エラー（無視可能）: $e');
         }
@@ -947,41 +1088,85 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         // リスナーを一度だけ追加
         if (!_backingTrackListenerAdded) {
           backingTrackController!.onPlayerStateChanged.listen((state) {
-            if (kDebugMode) print('バッキングトラックプレイヤー状態変更: ${state.toString()}');
+            if (kDebugMode) print('MP3プレイヤー状態変更: ${state.toString()}');
             if (state.isPaused || state.isStopped) {
               if (mounted) {
                 setState(() {
                   _isBackingTrackPlaying = false;
                 });
-                if (kDebugMode) print('バッキングトラック再生状態をfalseに更新しました');
+                if (kDebugMode) print('MP3再生状態をfalseに更新しました');
               }
             }
           });
           _backingTrackListenerAdded = true;
-          if (kDebugMode) print('バッキングトラックプレイヤーリスナーを追加しました');
+          if (kDebugMode) print('MP3プレイヤーリスナーを追加しました');
         }
 
-        // URL から再生開始
+        // MP3 URL から再生開始 - Android用にローカルファイルをダウンロード
+        if (kDebugMode) print('プレイヤーを準備中: $mp3Url');
+        
+        String playPath = mp3Url;
+        
+        // Androidの場合、URLから一時的にローカルファイルをダウンロード
+        try {
+          final response = await http.get(Uri.parse(mp3Url));
+          if (response.statusCode == 200) {
+            final directory = await getTemporaryDirectory();
+            final fileName = 'temp_mp3_${DateTime.now().millisecondsSinceEpoch}.mp3';
+            final localFile = File('${directory.path}/$fileName');
+            await localFile.writeAsBytes(response.bodyBytes);
+            playPath = localFile.path;
+            if (kDebugMode) print('MP3ファイルをローカルにダウンロード: $playPath');
+          } else {
+            throw Exception('MP3ダウンロード失敗: ${response.statusCode}');
+          }
+        } catch (downloadError) {
+          if (kDebugMode) print('MP3ダウンロードエラー: $downloadError');
+          // ダウンロードに失敗した場合は元のURLを使用
+          playPath = mp3Url;
+        }
+        
         await backingTrackController!.preparePlayer(
-          path: backingTrackUrl,
-          shouldExtractWaveform: true,
+          path: playPath,
+          shouldExtractWaveform: false,  // MP3再生時は波形抽出を無効
         );
+        
+        if (kDebugMode) print('プレイヤーの準備が完了、再生を開始します');
         await backingTrackController!.startPlayer();
         setState(() {
           _isBackingTrackPlaying = true;
         });
-        if (kDebugMode) print('バッキングトラック再生が開始されました');
+        if (kDebugMode) print('MP3再生が開始されました');
       }
     } catch (e) {
-      if (kDebugMode) print('バッキングトラック再生エラー: $e');
+      if (kDebugMode) {
+        print('MP3再生エラー: $e');
+        print('エラータイプ: ${e.runtimeType}');
+        print('MP3 URL: $mp3Url');
+      }
       setState(() {
         _isBackingTrackPlaying = false;
       });
       if (mounted && context.mounted) {
+        String errorMessage = 'MP3再生に失敗しました';
+        if (e.toString().contains('network') || e.toString().contains('connection')) {
+          errorMessage = 'ネットワークエラー：インターネット接続を確認してください';
+        } else if (e.toString().contains('format') || e.toString().contains('codec')) {
+          errorMessage = 'MP3ファイルの形式に問題があります';
+        } else if (e.toString().contains('permission')) {
+          errorMessage = '音声再生の権限がありません';
+        }
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('バッキングトラック再生エラー: $e'),
-            duration: const Duration(seconds: 3),
+            content: Text(errorMessage),
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: '再試行',
+              onPressed: () {
+                _toggleBackingTrackPlayback();
+              },
+            ),
           ),
         );
       }
@@ -989,7 +1174,18 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _toggleWebBackingTrackPlayback(String url) async {
-    if (_webAudioRecorder == null) return;
+    if (_webAudioRecorder == null) {
+      if (kDebugMode) print('WebAudioRecorder is null');
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Web音声プレイヤーが初期化されていません'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
 
     try {
       if (_isBackingTrackPlaying) {
@@ -1006,14 +1202,18 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           _isBackingTrackPlaying = true;
         });
 
-        // 再生完了を監視
-        _webAudioRecorder.playbackStateStream.listen((isPlaying) {
-          if (mounted) {
-            setState(() {
-              _isBackingTrackPlaying = isPlaying;
-            });
-          }
-        });
+        // リスナーの重複を避けるため、一度だけ設定
+        if (!_backingTrackListenerAdded) {
+          _webAudioRecorder.playbackStateStream.listen((isPlaying) {
+            if (mounted) {
+              setState(() {
+                _isBackingTrackPlaying = isPlaying;
+              });
+            }
+          });
+          _backingTrackListenerAdded = true;
+          if (kDebugMode) print('Webバッキングトラックリスナーを追加しました');
+        }
 
         // URLから音声を再生（実際のWeb実装では fetch + AudioContext を使用）
         await _webAudioRecorder.playAudioFromUrl(url);
@@ -1026,8 +1226,25 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       if (mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('バッキングトラック再生エラー: $e'),
-            duration: const Duration(seconds: 3),
+            content: kIsWeb 
+                ? const Text('⚠️ Web版では音声の自動再生に制限があります\nURLを新しいタブで開いて手動で再生してください')
+                : Text('バッキングトラック再生エラー: ${e.toString()}'),
+            duration: const Duration(seconds: 5),
+            action: kIsWeb ? SnackBarAction(
+              label: 'URLコピー',
+              onPressed: () {
+                final url = _analysisResult?.backingTrackUrl;
+                if (url != null) {
+                  Clipboard.setData(ClipboardData(text: url));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('バッキングトラックURLをコピーしました'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
+              },
+            ) : null,
           ),
         );
       }
@@ -1038,6 +1255,56 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     setState(() {
       _isChatOpen = !_isChatOpen;
     });
+  }
+
+  // URL妥当性チェック用ヘルパーメソッド
+  bool _isValidUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      return uri.isAbsolute && (uri.scheme == 'http' || uri.scheme == 'https');
+    } catch (e) {
+      if (kDebugMode) print('URL validation error: $e');
+      return false;
+    }
+  }
+
+  // Web環境で新しいタブでURLを開く
+  void _openUrlInNewTab(String url, [String? fileType]) {
+    if (kIsWeb) {
+      try {
+        if (kDebugMode) print('Opening URL in new tab: $url');
+        
+        // Web環境では簡単にURLをクリップボードにコピーして、ユーザーに開いてもらう
+        Clipboard.setData(ClipboardData(text: url));
+        
+        // ファイルタイプに応じてメッセージを変更
+        String message;
+        if (fileType == 'musicxml' || url.contains('.xml') || url.contains('musicxml')) {
+          message = '楽譜 URL をコピーしました\n新しいタブで開いてダウンロードしてください';
+        } else {
+          message = 'MP3 URL をコピーしました\n新しいタブで開いてダウンロードしてください';
+        }
+        
+        if (mounted && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(message),
+              duration: const Duration(seconds: 3),
+              action: SnackBarAction(
+                label: '開く',
+                onPressed: () {
+                  // JavaScriptコールバックで新しいタブを開く
+                  if (kDebugMode) print('User requested to open URL: $url');
+                },
+              ),
+            ),
+          );
+        }
+        
+      } catch (e) {
+        if (kDebugMode) print('Failed to handle URL: $e');
+      }
+    }
   }
 
   @override
@@ -1199,13 +1466,15 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                         child: Column(
                           children: [
                             _buildExplanationSection(),
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 20),
                             _buildRecordingSection(),
-                            if (_recordingState == RecordingState.uploading || _recordingState == RecordingState.idle || _recordingState == RecordingState.recording)
+                            if (_recordingState == RecordingState.uploading || _recordingState == RecordingState.idle || _recordingState == RecordingState.recording) ...[
+                              const SizedBox(height: 20),
                               _buildUploadingIndicator(),
-                            const SizedBox(height: 16),
+                            ],
+                            const SizedBox(height: 20),
                             _buildAnalysisResults(),
-                            if (_isAnalyzed) const SizedBox(height: 16),
+                            if (_isAnalyzed) const SizedBox(height: 20),
                             _buildBackingTrackPlayer(),
                           ],
                         ),
@@ -1502,7 +1771,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          '💬 + 「もっとドラマチックに」など感性もAIに相談可能',
+                          '「もっとドラマチックに」など感性もAIに相談可能',
                           style: TextStyle(
                             fontSize: 11,
                             color: Colors.purple.shade700,
@@ -1520,7 +1789,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           
           // 5. BENEFIT: 得られる価値
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: Colors.green.shade50,
               borderRadius: BorderRadius.circular(10),
@@ -1546,12 +1815,23 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(
-                        '🎯 鼻歌から、AIと一緒に作り上げる、世界で唯一無二の作品',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.green.shade700,
-                          fontWeight: FontWeight.w500,
+                      child: RichText(
+                        text: TextSpan(
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.green.shade700,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          children: [
+                            const TextSpan(text: '鼻歌からAIと一緒に作り上げる'),
+                            TextSpan(
+                              text: '世界で唯一無二の作品',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green.shade700,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -1947,23 +2227,32 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
   Widget _buildAnalysisResults() {
     // 常にカードを表示 - 解析中はローディング状態を表示
+    final bool hasData = _analysisResult != null;
 
-    return Container(
+    return Opacity(
+      opacity: hasData ? 1.0 : 0.4,
+      child: Container(
       width: double.infinity,
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            Colors.deepPurple.shade50,
-            Colors.indigo.shade50,
-            Colors.blue.shade50,
-          ],
+          colors: (_analysisResult != null)
+              ? [
+                  Colors.deepPurple.shade50,
+                  Colors.indigo.shade50,
+                  Colors.blue.shade50,
+                ]
+              : [
+                  Colors.grey.shade200,
+                  Colors.grey.shade300,
+                  Colors.grey.shade400,
+                ],
         ),
         borderRadius: BorderRadius.circular(24.0),
         boxShadow: [
           BoxShadow(
-            color: Colors.deepPurple.withValues(alpha: 0.15),
+            color: ((_analysisResult != null) ? Colors.deepPurple : Colors.grey).withValues(alpha: 0.15),
             blurRadius: 24,
             offset: const Offset(0, 12),
             spreadRadius: 0,
@@ -1992,15 +2281,20 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [
-                        Colors.deepPurple.shade600,
-                        Colors.indigo.shade600,
-                      ],
+                      colors: (_analysisResult != null)
+                          ? [
+                              Colors.deepPurple.shade600,
+                              Colors.indigo.shade600,
+                            ]
+                          : [
+                              Colors.grey.shade400,
+                              Colors.grey.shade500,
+                            ],
                     ),
                     borderRadius: BorderRadius.circular(16),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.deepPurple.withValues(alpha: 0.3),
+                        color: ((_analysisResult != null) ? Colors.deepPurple : Colors.grey).withValues(alpha: 0.3),
                         blurRadius: 8,
                         offset: const Offset(0, 4),
                       ),
@@ -2036,73 +2330,79 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 ),
               ),
               const SizedBox(height: 20),
-              _isAnalyzed 
-                ? GridView.count(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: isWeb ? 3.0 : 1.8, // Web版はより横長に（高さはコンテンツに依存）
-                      children: [
-                        _buildAnalysisChip('Key', _analysisResult?.key ?? 'C Major', Icons.music_note),
-                        _buildAnalysisChip('BPM', _analysisResult?.bpm.toString() ?? '120', Icons.speed),
-                        _buildAnalysisChip('Chords', _analysisResult?.chords ?? 'C-G-Am', Icons.piano),
-                        _buildAnalysisChip('Genre', _analysisResult?.genre ?? 'Rock', Icons.library_music),
-                      ],
-                    )
-                : _buildAnalysisLoadingState(),
+              // テーマ表示（常に表示、解析前はグレーアウト）
+              _buildThemeDisplay(),
+              const SizedBox(height: 20),
+              GridView.count(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisCount: 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: isWeb ? 3.0 : 1.8, // Web版はより横長に（高さはコンテンツに依存）
+                children: [
+                  _buildAnalysisChip('Key', _analysisResult?.key ?? '-', Icons.music_note, isGrayedOut: _analysisResult == null),
+                  _buildAnalysisChip('BPM', _analysisResult?.bpm.toString() ?? '-', Icons.speed, isGrayedOut: _analysisResult == null),
+                  _buildAnalysisChip('Chords', _analysisResult?.chords ?? '-', Icons.piano, isGrayedOut: _analysisResult == null),
+                  _buildAnalysisChip('Genre', _analysisResult?.genre ?? '-', Icons.library_music, isGrayedOut: _analysisResult == null),
+                ],
+              ),
             ],
           ),
         ),
       ),
+    ),
     );
   }
 
   Widget _buildBackingTrackPlayer() {
     // バッキングトラックカードを常に表示
     final hasBackingTrack = _analysisResult?.backingTrackUrl != null && _analysisResult!.backingTrackUrl!.isNotEmpty;
+    final hasMp3File = _analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty;
+    final bool hasData = _analysisResult != null;
 
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: hasBackingTrack
-              ? [
-                  Colors.orange.shade50,
-                  Colors.amber.shade50,
-                  Colors.yellow.shade50,
-                ]
-              : [
-                  Colors.grey.shade50,
-                  Colors.blueGrey.shade50,
-                  Colors.grey.shade100,
-                ],
-        ),
-        borderRadius: BorderRadius.circular(24.0),
-        boxShadow: [
-          BoxShadow(
-            color: (hasBackingTrack ? Colors.orange : Colors.grey).withValues(alpha: 0.15),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-            spreadRadius: 0,
+    return Opacity(
+      opacity: hasData ? 1.0 : 0.4,
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: hasData
+                ? [
+                    Colors.orange.shade50,
+                    Colors.amber.shade50,
+                    Colors.yellow.shade50,
+                  ]
+                : [
+                    Colors.grey.shade200,
+                    Colors.grey.shade300,
+                    Colors.grey.shade400,
+                  ],
           ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-            spreadRadius: -2,
+          borderRadius: BorderRadius.circular(24.0),
+          boxShadow: hasData ? [
+            BoxShadow(
+              color: Colors.orange.withValues(alpha: 0.15),
+              blurRadius: 24,
+              offset: const Offset(0, 12),
+              spreadRadius: 0,
+            ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+              spreadRadius: -2,
+            ),
+          ] : [],
+          border: Border.all(
+            color: hasData ? Colors.white.withValues(alpha: 0.8) : Colors.grey.shade300,
+            width: 1.5,
           ),
-        ],
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.8),
-          width: 1.5,
         ),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24.0),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24.0),
         child: Container(
           padding: const EdgeInsets.all(20.0),
           child: Column(
@@ -2113,20 +2413,20 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: hasBackingTrack
+                      colors: hasData
                           ? [
                               Colors.orange.shade600,
                               Colors.amber.shade600,
                             ]
                           : [
+                              Colors.grey.shade400,
                               Colors.grey.shade500,
-                              Colors.blueGrey.shade500,
                             ],
                     ),
                     borderRadius: BorderRadius.circular(16),
                     boxShadow: [
                       BoxShadow(
-                        color: (hasBackingTrack ? Colors.orange : Colors.grey).withValues(alpha: 0.3),
+                        color: (hasData ? Colors.orange : Colors.grey).withValues(alpha: 0.3),
                         blurRadius: 8,
                         offset: const Offset(0, 4),
                       ),
@@ -2142,7 +2442,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Icon(
-                          hasBackingTrack ? Icons.piano : Icons.piano_outlined,
+                          (hasBackingTrack || hasMp3File) ? Icons.piano : Icons.piano_outlined,
                           color: Colors.white,
                           size: 20,
                         ),
@@ -2164,112 +2464,79 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               const SizedBox(height: 20),
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(16.0),
+                padding: const EdgeInsets.all(20.0),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: hasBackingTrack
+                    colors: hasData
                         ? [
                             Colors.white,
                             Colors.orange.shade50,
                           ]
                         : [
-                            Colors.white,
-                            Colors.grey.shade50,
+                            Colors.grey.shade200,
+                            Colors.grey.shade100,
                           ],
                   ),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: hasBackingTrack ? Colors.orange.shade200 : Colors.grey.shade200,
+                    color: hasData ? Colors.orange.shade200 : Colors.grey.shade300,
                     width: 1,
                   ),
                 ),
             child: Column(
               children: [
-                Icon(
-                  hasBackingTrack ? Icons.music_note : Icons.music_off,
-                  color: hasBackingTrack ? Colors.orange.shade600 : Colors.grey.shade400,
-                  size: 32,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (_isAnalyzed && _analysisResult != null) ...[
+                      InkWell(
+                        onTap: _toggleBackingTrackPlayback,
+                        borderRadius: BorderRadius.circular(30),
+                        child: Container(
+                          width: 60,
+                          height: 60,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: _isBackingTrackPlaying 
+                                  ? [Colors.red.shade500, Colors.red.shade700]
+                                  : [Colors.green.shade500, Colors.green.shade700],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: (_isBackingTrackPlaying ? Colors.red : Colors.green).withValues(alpha: 0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Icon(
+                            _isBackingTrackPlaying ? Icons.pause : Icons.play_arrow,
+                            size: 30,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  hasBackingTrack 
-                      ? '🎤 素敵なメロディですね！伴奏を付けました'
+                  hasData
+                      ? '🎤 素敵なメロディですね！MP3ファイルで再生できます'
                       : '録音・解析後、AIが伴奏を自動生成します',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: hasBackingTrack ? Colors.orange.shade700 : Colors.grey.shade600,
+                    color: hasData ? Colors.orange.shade700 : Colors.grey.shade600,
                     fontSize: 15,
-                    fontWeight: hasBackingTrack ? FontWeight.w500 : FontWeight.normal,
+                    fontWeight: hasData ? FontWeight.w500 : FontWeight.normal,
                   ),
                 ),
               ],
             ),
           ),
-          if (!isWeb) ...[
-            const SizedBox(height: 16),
-            Container(
-              height: math.min(60, MediaQuery.of(context).size.height * 0.08),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(8.0),
-                border: Border.all(color: Colors.grey.shade300, width: 1.0),
-              ),
-              child: hasBackingTrack && backingTrackController != null
-                  ? AudioFileWaveforms(
-                      playerController: backingTrackController!,
-                      size: Size(MediaQuery.of(context).size.width - 80, 60),
-                      playerWaveStyle: const PlayerWaveStyle(
-                        seekLineColor: Colors.orange,
-                        showSeekLine: true,
-                        waveCap: StrokeCap.round,
-                        fixedWaveColor: Colors.orange,
-                        liveWaveColor: Colors.orange,
-                      ),
-                      waveformType: WaveformType.fitWidth,
-                    )
-                  : const Center(
-                      child: Text(
-                        'バッキングトラックが利用可能になると波形が表示されます',
-                        style: TextStyle(
-                          color: Colors.grey,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-            ),
-            const SizedBox(height: 16),
-          ] else if (isWeb && hasBackingTrack) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-              decoration: BoxDecoration(
-                color: Colors.orange.shade50,
-                borderRadius: BorderRadius.circular(8.0),
-                border: Border.all(color: Colors.orange.shade200, width: 1.0),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.music_note,
-                    color: Colors.orange.shade600,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'バッキングトラック: ${_analysisResult!.backingTrackUrl!.split('/').last}',
-                      style: TextStyle(
-                        color: Colors.orange.shade700,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 6),
-          ],
               const SizedBox(height: 20),
               Row(
                 children: [
@@ -2280,112 +2547,18 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                         gradient: LinearGradient(
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
-                          colors: hasBackingTrack
-                              ? (_isBackingTrackPlaying 
-                                  ? [Colors.red.shade100, Colors.red.shade200]
-                                  : [Colors.white, Colors.green.shade50])
-                              : [Colors.white, Colors.grey.shade100],
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: hasBackingTrack
-                              ? (_isBackingTrackPlaying ? Colors.red.shade300 : Colors.green.shade200)
-                              : Colors.grey.shade300,
-                          width: 1,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: hasBackingTrack
-                                ? (_isBackingTrackPlaying ? Colors.red : Colors.green).withValues(alpha: 0.2)
-                                : Colors.grey.withValues(alpha: 0.2),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: InkWell(
-                        onTap: hasBackingTrack 
-                            ? _toggleBackingTrackPlayback 
-                            : () {
-                                if (mounted && context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('音声を録音・解析するとバッキングトラックが利用できます'),
-                                      duration: Duration(seconds: 2),
-                                    ),
-                                  );
-                                }
-                              },
-                        borderRadius: BorderRadius.circular(16),
-                        child: Column(
-                          children: [
-                            Container(
-                              width: 48,
-                              height: 48,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: hasBackingTrack
-                                      ? (_isBackingTrackPlaying 
-                                          ? [Colors.red.shade500, Colors.red.shade700]
-                                          : [Colors.green.shade500, Colors.green.shade700])
-                                      : [Colors.grey.shade400, Colors.grey.shade500],
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: hasBackingTrack
-                                        ? (_isBackingTrackPlaying ? Colors.red : Colors.green).withValues(alpha: 0.3)
-                                        : Colors.grey.withValues(alpha: 0.3),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: Icon(
-                                hasBackingTrack && _isBackingTrackPlaying ? Icons.stop_rounded : Icons.play_arrow_rounded,
-                                size: 24,
-                                color: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              hasBackingTrack && _isBackingTrackPlaying ? '🎵 演奏中' : hasBackingTrack ? '🎧 演奏開始' : '🎧 演奏待ち',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: hasBackingTrack
-                                    ? (_isBackingTrackPlaying ? Colors.red.shade700 : Colors.green.shade700)
-                                    : Colors.grey.shade600,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: hasBackingTrack
+                          colors: hasData
                               ? [Colors.white, Colors.blue.shade50]
-                              : [Colors.white, Colors.grey.shade100],
+                              : [Colors.grey.shade200, Colors.grey.shade100],
                         ),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
-                          color: hasBackingTrack ? Colors.blue.shade200 : Colors.grey.shade300,
+                          color: hasData ? Colors.blue.shade200 : Colors.grey.shade300,
                           width: 1,
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: (hasBackingTrack ? Colors.blue : Colors.grey).withValues(alpha: 0.2),
+                            color: (hasData ? Colors.blue : Colors.grey).withValues(alpha: 0.2),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),
@@ -2394,29 +2567,52 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                       child: InkWell(
                         onTap: hasBackingTrack
                             ? () async {
-                                final url = _analysisResult!.backingTrackUrl!;
-                                if (mounted && context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        'バッキングトラックURL: $url',
+                                final musicXmlUrl = _analysisResult!.backingTrackUrl!;
+                                try {
+                                  if (kIsWeb) {
+                                    // Web環境では新しいタブでURLを開く（MP3ダウンロードと同じ仕組み）
+                                    _openUrlInNewTab(musicXmlUrl, 'musicxml');
+                                  } else {
+                                    // モバイル環境ではURLを表示してコピー可能にする
+                                    if (mounted && context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('MusicXMLファイルURL: $musicXmlUrl'),
+                                          duration: const Duration(seconds: 3),
+                                          action: SnackBarAction(
+                                            label: 'コピー',
+                                            onPressed: () async {
+                                              await Clipboard.setData(ClipboardData(text: musicXmlUrl));
+                                              if (mounted && context.mounted) {
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text('URLをクリップボードにコピーしました'),
+                                                    duration: Duration(seconds: 1),
+                                                  ),
+                                                );
+                                              }
+                                            },
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  }
+                                } catch (e) {
+                                  if (mounted && context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('ダウンロードに失敗しました: $e'),
+                                        duration: const Duration(seconds: 2),
                                       ),
-                                      duration: const Duration(seconds: 3),
-                                      action: SnackBarAction(
-                                        label: 'コピー',
-                                        onPressed: () {
-                                          // URLをクリップボードにコピーする機能はプラットフォーム依存のため省略
-                                        },
-                                      ),
-                                    ),
-                                  );
+                                    );
+                                  }
                                 }
                               }
                             : () {
                                 if (mounted && context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                      content: Text('バッキングトラックが生成されるとダウンロードできます'),
+                                      content: Text('MusicXMLファイルが生成されるとダウンロードできます'),
                                       duration: Duration(seconds: 2),
                                     ),
                                   );
@@ -2446,18 +2642,154 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                                 ],
                               ),
                               child: Icon(
-                                Icons.download_rounded,
+                                hasBackingTrack ? Icons.library_music : Icons.music_note_outlined,
                                 size: 24,
                                 color: Colors.white,
                               ),
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              hasBackingTrack ? '💾 ダウンロード' : '💾 生成待ち',
+                              hasBackingTrack ? '🎼 楽譜ダウンロード' : '🎼 生成待ち',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 13,
                                 color: hasBackingTrack ? Colors.blue.shade700 : Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // MP3ダウンロードボタン
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: hasData
+                              ? [Colors.white, Colors.purple.shade50]
+                              : [Colors.grey.shade200, Colors.grey.shade100],
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: hasData 
+                            ? Colors.purple.shade200 
+                            : Colors.grey.shade300,
+                          width: 1,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: (hasData 
+                              ? Colors.purple 
+                              : Colors.grey).withValues(alpha: 0.2),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: InkWell(
+                        onTap: (_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty)
+                            ? () async {
+                                final mp3Url = _analysisResult!.generatedMp3Url!;
+                                try {
+                                  if (kIsWeb) {
+                                    // Web環境では新しいタブでURLを開く
+                                    _openUrlInNewTab(mp3Url);
+                                  } else {
+                                    // モバイル環境ではシステムのダウンロード機能を使用
+                                    if (mounted && context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('MP3ファイルURL: $mp3Url'),
+                                          duration: const Duration(seconds: 3),
+                                          action: SnackBarAction(
+                                            label: 'コピー',
+                                            onPressed: () async {
+                                              await Clipboard.setData(ClipboardData(text: mp3Url));
+                                              if (mounted && context.mounted) {
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text('URLをクリップボードにコピーしました'),
+                                                    duration: Duration(seconds: 1),
+                                                  ),
+                                                );
+                                              }
+                                            },
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  }
+                                } catch (e) {
+                                  if (mounted && context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('ダウンロードに失敗しました: $e'),
+                                        duration: const Duration(seconds: 2),
+                                      ),
+                                    );
+                                  }
+                                }
+                              }
+                            : () {
+                                if (mounted && context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('MP3ファイルが生成されるとダウンロードできます'),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
+                                }
+                              },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Column(
+                          children: [
+                            Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: (_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty)
+                                      ? [Colors.purple.shade500, Colors.purple.shade700]
+                                      : [Colors.grey.shade400, Colors.grey.shade500],
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: ((_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty) 
+                                      ? Colors.purple 
+                                      : Colors.grey).withValues(alpha: 0.3),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(
+                                (_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty)
+                                    ? Icons.download_rounded
+                                    : Icons.music_video_rounded,
+                                size: 24,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              (_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty) 
+                                ? '⬇️ MP3ダウンロード'
+                                : '🎵 生成待ち',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: (_analysisResult?.generatedMp3Url != null && _analysisResult!.generatedMp3Url!.isNotEmpty) 
+                                  ? Colors.purple.shade700 
+                                  : Colors.grey.shade600,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -2472,6 +2804,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -2704,236 +3037,179 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildAnalysisLoadingState() {
-    final isUploading = _recordingState == RecordingState.uploading;
+
+
+  Widget _buildThemeDisplay() {
+    final bool hasData = _analysisResult != null;
     
     return Container(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        children: [
-          // アニメーション付きローディングサークル
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [
-                  Colors.deepPurple.shade400,
-                  Colors.indigo.shade400,
-                  Colors.blue.shade400,
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.deepPurple.withValues(alpha: 0.3),
-                  blurRadius: 16,
-                  offset: const Offset(0, 8),
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: hasData
+                ? [
+                    Colors.indigo.shade50,
+                    Colors.purple.shade50,
+                    Colors.pink.shade50,
+                  ]
+                : [
+                    Colors.grey.shade100,
+                    Colors.grey.shade200,
+                    Colors.grey.shade300,
+                  ],
+          ),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: hasData ? Colors.indigo.shade100 : Colors.grey.shade400,
+            width: 1,
+          ),
+          boxShadow: hasData ? [
+            BoxShadow(
+              color: Colors.indigo.withValues(alpha: 0.1),
+              blurRadius: 15,
+              offset: const Offset(0, 4),
+            ),
+          ] : [],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: hasData ? Colors.indigo.shade500 : Colors.grey.shade500,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    hasData ? Icons.color_lens : Icons.schedule,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  hasData ? 'ハミング解析テーマ' : 'ハミング解析待機中...',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: hasData ? Colors.indigo : Colors.grey.shade600,
+                    letterSpacing: 0.5,
+                  ),
                 ),
               ],
             ),
-            child: const Center(
-              child: CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                strokeWidth: 3,
+            const SizedBox(height: 12),
+            Text(
+              hasData 
+                  ? (_analysisResult?.hummingTheme ?? 'テーマ情報なし')
+                  : '録音・解析後、AIがハミングのテーマを抽出します',
+              style: TextStyle(
+                fontSize: 14,
+                color: hasData ? Colors.indigo.shade700 : Colors.grey.shade600,
+                height: 1.4,
+                fontWeight: FontWeight.w500,
               ),
             ),
-          ),
-          const SizedBox(height: 24),
-          // ローディングテキスト
-          Text(
-            isUploading ? 'AI解析を実行中...' : 'AI解析を待機中',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: Colors.deepPurple.shade700,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            isUploading 
-                ? '音楽的特徴を分析しています\n少々お待ちください' 
-                : '録音完了後に自動で解析を開始します',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.grey.shade600,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 20),
-          // ローディング用のプレースホルダーチップ
-          GridView.count(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 2,
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 1.8,
-            children: [
-              _buildLoadingChip('Key', Icons.music_note),
-              _buildLoadingChip('BPM', Icons.speed),
-              _buildLoadingChip('Chords', Icons.piano),
-              _buildLoadingChip('Genre', Icons.library_music),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLoadingChip(String label, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.grey.shade100,
-            Colors.grey.shade200,
           ],
         ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.grey.shade300,
-          width: 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade400,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  icon,
-                  color: Colors.white,
-                  size: 16,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: Colors.grey.shade500,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 11,
-                    letterSpacing: 0.3,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Container(
-            height: 14,
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade300,
-              borderRadius: BorderRadius.circular(7),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(7),
-              child: LinearProgressIndicator(
-                backgroundColor: Colors.transparent,
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.grey.shade400),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+      );
   }
 
-  Widget _buildAnalysisChip(String label, String value, IconData icon) {
+  Widget _buildAnalysisChip(String label, String value, IconData icon, {bool isGrayedOut = false}) {
     return Container(
-      constraints: isWeb ? const BoxConstraints(maxHeight: 100) : null, // Web版は最大高さ制限
-      padding: EdgeInsets.all(isWeb ? 12 : 16), // Web版は少し小さく
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white,
-            Colors.grey.shade50,
+        constraints: isWeb ? const BoxConstraints(maxHeight: 100) : null, // Web版は最大高さ制限
+        padding: EdgeInsets.all(isWeb ? 12 : 16), // Web版は少し小さく
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: isGrayedOut
+                ? [
+                    Colors.grey.shade200,
+                    Colors.grey.shade100,
+                  ]
+                : [
+                    Colors.white,
+                    Colors.grey.shade50,
+                  ],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isGrayedOut ? Colors.grey.shade300 : Colors.grey.shade200,
+            width: 1,
+          ),
+          boxShadow: isGrayedOut
+              ? []
+              : [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: isGrayedOut
+                          ? [
+                              Colors.grey.shade400,
+                              Colors.grey.shade500,
+                            ]
+                          : [
+                              Colors.deepPurple.shade400,
+                              Colors.indigo.shade400,
+                            ],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    icon,
+                    color: Colors.white,
+                    size: isWeb ? 14 : 16, // Web版は少し小さく
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: isGrayedOut ? Colors.grey.shade500 : Colors.grey.shade600,
+                      fontWeight: FontWeight.w600,
+                      fontSize: isWeb ? 10 : 11, // Web版は少し小さく
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              value,
+              style: TextStyle(
+                color: isGrayedOut ? Colors.grey.shade600 : Colors.grey.shade800,
+                fontWeight: FontWeight.bold,
+                fontSize: isWeb ? 12 : 14, // Web版は少し小さく
+                letterSpacing: 0.2,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
         ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.grey.shade200,
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.deepPurple.shade400,
-                      Colors.indigo.shade400,
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  icon,
-                  color: Colors.white,
-                  size: isWeb ? 14 : 16, // Web版は少し小さく
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: Colors.grey.shade600,
-                    fontWeight: FontWeight.w600,
-                    fontSize: isWeb ? 10 : 11, // Web版は少し小さく
-                    letterSpacing: 0.3,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              color: Colors.grey.shade800,
-              fontWeight: FontWeight.bold,
-              fontSize: isWeb ? 12 : 14, // Web版は少し小さく
-              letterSpacing: 0.2,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      ),
-    );
+      );
   }
 
   Widget _buildUploadingIndicator() {
@@ -2962,7 +3238,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 16.0),
       padding: const EdgeInsets.all(24.0),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -3090,166 +3365,31 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
             ),
             const SizedBox(height: 8),
-            // 残り時間表示
-            Text(
-              '残り時間: ${((1 - progress) * 60).toInt()}秒',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey.shade600,
-                fontWeight: FontWeight.w500,
+            // 残り時間表示とリトライ状況
+            if (_isRetrying) 
+              Text(
+                'リトライ中... しばらくお待ちください',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.orange.shade600,
+                  fontWeight: FontWeight.w600,
+                ),
+              )
+            else
+              Text(
+                '残り時間: ${((1 - progress) * 60).toInt()}秒',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
           ],
         );
       },
     );
   }
 
-  Widget _buildCustomLoadingAnimation() {
-    return AnimatedBuilder(
-      animation: _loadingAnimationController,
-      builder: (context, child) {
-        final value = _loadingAnimationController.value;
-        return Stack(
-          alignment: Alignment.center,
-          children: [
-            // Outer pulsing hexagon
-            Transform.rotate(
-              angle: value * 6.28318,
-              child: Container(
-                width: 70,
-                height: 70,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: const Color(0xFF00D4FF).withValues(alpha: 0.6),
-                    width: 2,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF00D4FF).withValues(alpha: 0.3),
-                      blurRadius: 8,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            
-            // Middle rotating ring with gradient effect
-            Transform.rotate(
-              angle: -value * 4.71, // 3/4 speed in opposite direction
-              child: Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [
-                      const Color(0xFF6366F1),
-                      const Color(0xFF8B5CF6),
-                      const Color(0xFFEC4899),
-                      const Color(0xFF06B6D4),
-                    ],
-                    stops: const [0.0, 0.33, 0.66, 1.0],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    transform: GradientRotation(value * 6.28318),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF8B5CF6).withValues(alpha: 0.4),
-                      blurRadius: 6,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
-                child: Container(
-                  margin: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-            
-            // Inner data particles
-            ...List.generate(6, (index) {
-              final particleAngle = (index * 1.047) + (value * 8.377); // π/3 spacing, faster rotation
-              final radius = 15.0 + (3.0 * math.sin(value * 6.28 + index));
-              final particleSize = 3.0 + (1.5 * math.sin(value * 12.56 + index * 2));
-              final opacity = 0.7 + (0.3 * math.sin(value * 10 + index));
-              
-              return Transform.translate(
-                offset: Offset(
-                  radius * math.cos(particleAngle),
-                  radius * math.sin(particleAngle),
-                ),
-                child: Container(
-                  width: particleSize,
-                  height: particleSize,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: const Color(0xFF00F5FF).withValues(alpha: opacity),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF00F5FF).withValues(alpha: 0.6),
-                        blurRadius: 3,
-                        spreadRadius: 0.5,
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }),
-            
-            // Central AI core with matrix effect
-            Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [
-                    const Color(0xFF00F5FF).withValues(alpha: 0.9),
-                    const Color(0xFF6366F1).withValues(alpha: 0.7),
-                    const Color(0xFF1E293B).withValues(alpha: 0.9),
-                  ],
-                  stops: const [0.0, 0.6, 1.0],
-                ),
-                border: Border.all(
-                  color: const Color(0xFF00D4FF).withValues(alpha: 0.8),
-                  width: 1.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF00F5FF).withValues(alpha: 0.5),
-                    blurRadius: 8,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-              child: Icon(
-                Icons.memory,
-                size: 16,
-                color: Colors.white.withValues(alpha: 0.9 + 0.1 * math.sin(value * 10)),
-              ),
-            ),
-            
-            // Scanning lines effect
-            Positioned.fill(
-              child: ClipOval(
-                child: CustomPaint(
-                  painter: ScanLinesPainter(animationValue: value),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
 
   Widget _buildMiniLoadingAnimation() {
     return AnimatedBuilder(
