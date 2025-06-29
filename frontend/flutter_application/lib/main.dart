@@ -3242,7 +3242,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   Widget _buildAnalysisChip(String label, String value, IconData icon, {bool isGrayedOut = false}) {
     return Container(
         constraints: isWeb ? const BoxConstraints(maxHeight: 100) : null, // Web版は最大高さ制限
-        padding: EdgeInsets.all(isWeb ? 12 : 16), // Web版は少し小さく
+        padding: EdgeInsets.all(isWeb ? 12 : 15.5), // Web版は少し小さく
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
