@@ -39,9 +39,6 @@ Session MUSEが対象とするのは、自宅で楽曲制作に打ち込む「�
 
 Session MUSEは、これらの「壁」を打ち破るAIバンドメンバーです。
 
-✨ **簡単3ステップでAIとセッション**
-🎤 **① 鼻歌を録音** → 🤖 **② AI解析実行** → 🎵 **③ 一緒に演奏**
-
 ![image](screenshot/iOS/screenshot1-part.PNG)
 
 **従来手法との違い**
