@@ -1046,105 +1046,29 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       return;
     }
 
-    // モバイル環境でのバッキングトラック再生
-    if (backingTrackController == null) {
-      if (kDebugMode) print('BackingTrackController is null in mobile environment');
-      if (mounted && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('音声プレイヤーの初期化に失敗しました'),
-            duration: Duration(seconds: 2),
+    // モバイル環境でバッキングトラック再生（音声ファイルのダウンロード表示のみ）
+    if (mounted && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('バッキングトラックファイルをブラウザでダウンロードしてください'),
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'URLコピー',
+            onPressed: () {
+              // クリップボードへのコピーは別途実装が必要
+              if (kDebugMode) print('バッキングトラックURL: $backingTrackUrl');
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('URLがログに出力されました'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
           ),
-        );
-      }
-      return;
+        ),
+      );
     }
-
-    try {
-      if (_isBackingTrackPlaying) {
-        // 停止
-        if (kDebugMode) print('バッキングトラック再生を停止します');
-        await backingTrackController!.stopPlayer();
-        setState(() {
-          _isBackingTrackPlaying = false;
-        });
-        if (kDebugMode) print('バッキングトラック再生が停止されました');
-      } else {
-        // 再生開始
-        if (kDebugMode) print('バッキングトラック再生を開始します: $backingTrackUrl');
-
-        // 既存の再生を完全に停止してリセット
-        try {
-          await backingTrackController!.stopPlayer();
-          if (kDebugMode) print('既存のバッキングトラック再生を停止しました');
-        } catch (e) {
-          if (kDebugMode) print('停止時エラー（無視可能）: $e');
-        }
-
-        // リスナーを一度だけ追加
-        if (!_backingTrackListenerAdded) {
-          backingTrackController!.onPlayerStateChanged.listen((state) {
-            if (kDebugMode) print('バッキングトラックプレイヤー状態変更: ${state.toString()}');
-            if (state.isPaused || state.isStopped) {
-              if (mounted) {
-                setState(() {
-                  _isBackingTrackPlaying = false;
-                });
-                if (kDebugMode) print('バッキングトラック再生状態をfalseに更新しました');
-              }
-            }
-          });
-          _backingTrackListenerAdded = true;
-          if (kDebugMode) print('バッキングトラックプレイヤーリスナーを追加しました');
-        }
-
-        // URL から再生開始
-        if (kDebugMode) print('プレイヤーを準備中: $backingTrackUrl');
-        await backingTrackController!.preparePlayer(
-          path: backingTrackUrl,
-          shouldExtractWaveform: true,
-        );
-        
-        if (kDebugMode) print('プレイヤーの準備が完了、再生を開始します');
-        await backingTrackController!.startPlayer();
-        setState(() {
-          _isBackingTrackPlaying = true;
-        });
-        if (kDebugMode) print('バッキングトラック再生が開始されました');
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('バッキングトラック再生エラー: $e');
-        print('エラータイプ: ${e.runtimeType}');
-        print('BackingTrack URL: $backingTrackUrl');
-      }
-      setState(() {
-        _isBackingTrackPlaying = false;
-      });
-      if (mounted && context.mounted) {
-        String errorMessage = 'バッキングトラックの再生に失敗しました';
-        if (e.toString().contains('network') || e.toString().contains('connection')) {
-          errorMessage = 'ネットワークエラー：インターネット接続を確認してください';
-        } else if (e.toString().contains('format') || e.toString().contains('codec')) {
-          errorMessage = 'バッキングトラックの形式がサポートされていません';
-        } else if (e.toString().contains('permission')) {
-          errorMessage = '音声再生の権限がありません';
-        }
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMessage),
-            duration: const Duration(seconds: 4),
-            action: SnackBarAction(
-              label: '再試行',
-              onPressed: () {
-                _toggleBackingTrackPlayback();
-              },
-            ),
-          ),
-        );
-      }
-    }
+    return;
   }
 
   Future<void> _toggleWebBackingTrackPlayback(String url) async {
@@ -2404,39 +2328,37 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ],
             ),
           ),
-          if (!isWeb) ...[
-            const SizedBox(height: 16),
+          if (!isWeb && hasBackingTrack) ...[
+            const SizedBox(height: 8),
             Container(
-              height: math.min(60, MediaQuery.of(context).size.height * 0.08),
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
               decoration: BoxDecoration(
-                color: Colors.grey.shade100,
+                color: Colors.orange.shade50,
                 borderRadius: BorderRadius.circular(8.0),
-                border: Border.all(color: Colors.grey.shade300, width: 1.0),
+                border: Border.all(color: Colors.orange.shade200, width: 1.0),
               ),
-              child: hasBackingTrack && backingTrackController != null
-                  ? AudioFileWaveforms(
-                      playerController: backingTrackController!,
-                      size: Size(MediaQuery.of(context).size.width - 80, 60),
-                      playerWaveStyle: const PlayerWaveStyle(
-                        seekLineColor: Colors.orange,
-                        showSeekLine: true,
-                        waveCap: StrokeCap.round,
-                        fixedWaveColor: Colors.orange,
-                        liveWaveColor: Colors.orange,
-                      ),
-                      waveformType: WaveformType.fitWidth,
-                    )
-                  : const Center(
-                      child: Text(
-                        'バッキングトラックが利用可能になると波形が表示されます',
-                        style: TextStyle(
-                          color: Colors.grey,
-                          fontSize: 12,
-                        ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.music_note,
+                    color: Colors.orange.shade600,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'バッキングトラック: ${_analysisResult!.backingTrackUrl!.split('/').last}',
+                      style: TextStyle(
+                        color: Colors.orange.shade700,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 6),
           ] else if (isWeb && hasBackingTrack) ...[
             const SizedBox(height: 8),
             Container(
@@ -2527,36 +2449,30 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
                                   colors: hasBackingTrack
-                                      ? (_isBackingTrackPlaying 
-                                          ? [Colors.red.shade500, Colors.red.shade700]
-                                          : [Colors.green.shade500, Colors.green.shade700])
+                                      ? [Colors.blue.shade500, Colors.blue.shade700]
                                       : [Colors.grey.shade400, Colors.grey.shade500],
                                 ),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: hasBackingTrack
-                                        ? (_isBackingTrackPlaying ? Colors.red : Colors.green).withValues(alpha: 0.3)
-                                        : Colors.grey.withValues(alpha: 0.3),
+                                    color: (hasBackingTrack ? Colors.blue : Colors.grey).withValues(alpha: 0.3),
                                     blurRadius: 8,
                                     offset: const Offset(0, 4),
                                   ),
                                 ],
                               ),
                               child: Icon(
-                                hasBackingTrack && _isBackingTrackPlaying ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                                Icons.open_in_browser_rounded,
                                 size: 24,
                                 color: Colors.white,
                               ),
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              hasBackingTrack && _isBackingTrackPlaying ? '🎵 演奏中' : hasBackingTrack ? '🎧 演奏開始' : '🎧 演奏待ち',
+                              hasBackingTrack ? '🔗 URL取得' : '🎧 生成待ち',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 13,
-                                color: hasBackingTrack
-                                    ? (_isBackingTrackPlaying ? Colors.red.shade700 : Colors.green.shade700)
-                                    : Colors.grey.shade600,
+                                color: hasBackingTrack ? Colors.blue.shade700 : Colors.grey.shade600,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
