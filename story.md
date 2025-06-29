@@ -1,7 +1,5 @@
 # 鼻歌が楽曲に！AIパートナー「Session MUSE」が切り拓く作曲の民主化
 
-![SessionMUSE](https://img.shields.io/badge/AI-GoogleCloud-blue) ![Gemini](https://img.shields.io/badge/Gemini-CloudRun-green) ![Music](https://img.shields.io/badge/Music-Python-yellow) ![Flutter](https://img.shields.io/badge/Frontend-Flutter-blue) ![Hackathon](https://img.shields.io/badge/Event-aiagentzenn-purple)
-
 ## はじめに
 
 ### あなたの鼻歌が、世界で一つの曲に
