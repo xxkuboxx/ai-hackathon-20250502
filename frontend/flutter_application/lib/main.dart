@@ -625,6 +625,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               if (kDebugMode) print('プレイヤー停止時エラー（無視）: $e');
             }
             
+            // 少し待機してから波形準備を実行（前回の処理との競合を避ける）
+            await Future.delayed(const Duration(milliseconds: 200));
+            
             // 新しいファイルで波形準備を非同期実行
             playerController!.preparePlayer(
               path: recordedFilePath,
@@ -737,8 +740,21 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       return null;
     }
     
-    // 新しい録音開始時は波形準備状態をリセット
+    // 新しい録音開始時は波形準備状態をリセットし、PlayerControllerをクリア
     _isPlayerPrepared = false;
+    
+    // 既存のPlayerControllerを完全にリセット
+    if (playerController != null) {
+      try {
+        await playerController!.stopPlayer();
+        // 重要: PlayerControllerの内部状態をクリア
+        playerController!.dispose();
+        playerController = PlayerController();
+        if (kDebugMode) print('PlayerController完全リセット完了');
+      } catch (e) {
+        if (kDebugMode) print('PlayerControllerリセット時エラー: $e');
+      }
+    }
 
     try {
       if (isWeb) {

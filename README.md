@@ -36,7 +36,7 @@ Session MUSEは、鼻歌や楽器演奏をAIが解析し、リアルタイムで
 
 ビルド済みのAndroid APKファイルをすぐにお試しいただけます：
 
-- [**SessionMUSE-debug.apk**](build/android/SessionMUSE-debug.apk) (95.6MB) - デバッグ版
+- [**SessionMUSE-release.apk**](build/android/SessionMUSE-release.apk) (23.5MB) - リリース版
 
 ### インストール方法
 1. 上記リンクからAPKファイルをダウンロード
