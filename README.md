@@ -73,13 +73,6 @@ uvicorn main:app --reload
 - [📚 Development Story](story.md)
 - [🔒 Security Guidelines](SECURITY.md)
 
-## 🎵 デモ
-
-実際の動作は[デモ動画](https://www.youtube.com/shorts/y03-XEM2ZXc)をご覧ください。
-
-## 🤝 コントリビューション
-
-Issues、Pull Requestsを歓迎します。セキュリティに関する問題は[SECURITY.md](SECURITY.md)を参照してください。
 
 ## 📄 ライセンス
 
