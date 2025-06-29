@@ -3,7 +3,7 @@
 # Flutter Android Debug Script using adb
 # Usage: ./debug_android.sh [command]
 
-APP_PACKAGE="com.example.flutter_application"
+APP_PACKAGE="com.sessionmuse.aimusic"
 MAIN_ACTIVITY="$APP_PACKAGE/.MainActivity"
 SCREENSHOT_DIR="./debug_screenshots"
 UI_DUMP_FILE="./ui_dump.xml"

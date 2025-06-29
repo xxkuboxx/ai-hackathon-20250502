@@ -328,13 +328,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   bool _isLoadingResponse = false;
   
   // Animation controllers
-  late AnimationController _loadingAnimationController;
   late AnimationController _chatLoadingAnimationController;
   late AnimationController _progressAnimationController;
 
 
   // 状態管理
-  bool _isAnalyzed = false;
   bool _isPlaying = false;
 
   // チャット画面の状態管理
@@ -351,6 +349,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
   // プレイヤー状態リスナー管理
   bool _playerListenerAdded = false;
+  bool _isPlayerPrepared = false;
 
   // 解析キャンセル用
   bool _shouldCancelAnalysis = false;
@@ -371,10 +370,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     super.initState();
 
     // Animation controllers initialization
-    _loadingAnimationController = AnimationController(
-      duration: const Duration(seconds: 2),
-      vsync: this,
-    )..repeat();
     
     _chatLoadingAnimationController = AnimationController(
       duration: const Duration(milliseconds: 1500),
@@ -426,9 +421,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       ChatMessageModel(role: 'assistant', content: initialMessage),
     );
 
-    // 初期状態で解析結果を表示
-    _isAnalyzed = true;
-
     // Web版以外では常に制限モードから開始（永続化しない）
     if (!kIsWeb) {
       _isApiAccessEnabled = false;
@@ -438,7 +430,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _loadingAnimationController.dispose();
     _chatLoadingAnimationController.dispose();
     _progressAnimationController.dispose();
     _recorderController?.dispose();
@@ -528,9 +519,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         _isLoadingResponse = false;
       });
     }
-
-    // スクロールを最下部に移動
-    _scrollToBottom();
   }
 
   void _scrollToBottom() {
@@ -551,7 +539,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       setState(() {
         _shouldCancelAnalysis = true;
         _recordingState = RecordingState.recording;
-        _isAnalyzed = true;
+        _analysisResult = null;  // 前回の解析結果をクリア
       });
       if (kDebugMode) print('解析をキャンセルして新しい録音を開始します');
       
@@ -573,7 +561,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     if (_recordingState == RecordingState.idle) {
       setState(() {
         _recordingState = RecordingState.recording;
-        _isAnalyzed = true;
+        _analysisResult = null;  // 前回の解析結果をクリア
       });
       final recordingPath = await _setupRecording();
       if (recordingPath != null) {
@@ -626,31 +614,50 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           }
 
           // PlayerControllerで波形を準備（解析キャンセル時でも波形表示のため）
+          // 新しいファイルの場合、PlayerControllerをリセットしてから準備
           if (playerController != null) {
+            _isPlayerPrepared = false;
+            
+            // 既存のプレイヤーを停止してリセット
             try {
-              await playerController!.preparePlayer(
-                path: recordedFilePath,
-                shouldExtractWaveform: true,
-              );
-              if (kDebugMode) print('録音停止後の波形準備完了');
-              // 準備完了後にUIを更新
-              setState(() {});
+              await playerController!.stopPlayer();
             } catch (e) {
-              if (kDebugMode) print('録音停止後の波形準備エラー: $e');
-              // エラーが発生してもUIを更新（代替表示のため）
-              setState(() {});
+              if (kDebugMode) print('プレイヤー停止時エラー（無視）: $e');
             }
+            
+            // 新しいファイルで波形準備を非同期実行
+            playerController!.preparePlayer(
+              path: recordedFilePath,
+              shouldExtractWaveform: true,
+            ).then((_) {
+              if (kDebugMode) print('録音停止後の波形準備完了');
+              if (kDebugMode) print('DEBUG: _isPlayerPrepared = true に設定');
+              if (mounted) {
+                setState(() {
+                  _isPlayerPrepared = true;
+                });
+              }
+            }).catchError((e) {
+              if (kDebugMode) print('録音停止後の波形準備エラー: $e');
+              if (kDebugMode) print('DEBUG: _isPlayerPrepared = false に設定');
+              if (mounted) {
+                setState(() {
+                  _isPlayerPrepared = false;
+                });
+              }
+            });
           }
           
-          // 解析がキャンセルされている場合は解析を実行せず、状態のみ更新
-          if (_shouldCancelAnalysis) {
-            if (kDebugMode) print('解析キャンセル済み - 状態のみ更新');
-            setState(() {
-              _recordingState = RecordingState.idle;
-            });
-          } else {
-            await _uploadAndAnalyze();
-          }
+          // 録音停止後は常にキャンセルフラグをリセットして解析を実行
+          if (kDebugMode) print('DEBUG: 録音停止後、解析開始前の状態確認');
+          if (kDebugMode) print('DEBUG: _shouldCancelAnalysis = $_shouldCancelAnalysis');
+          if (kDebugMode) print('DEBUG: _audioFilePath = $_audioFilePath');
+          if (kDebugMode) print('DEBUG: _recordingState = $_recordingState');
+          
+          _shouldCancelAnalysis = false;
+          if (kDebugMode) print('DEBUG: _uploadAndAnalyze() 呼び出し開始');
+          await _uploadAndAnalyze();
+          if (kDebugMode) print('DEBUG: _uploadAndAnalyze() 呼び出し完了');
         } else {
           if (kDebugMode) print('recordedFilePath is null!');
           setState(() {
@@ -659,8 +666,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         }
       }
       setState(() {
-        _isAnalyzed = true;
-      });
+          });
     }
   }
 
@@ -691,8 +697,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       }
     } else if (_audioFilePath != null && !isWeb) {
       // 録音完了後はPlayerControllerを使って波形を表示
-      if (playerController != null) {
+      if (kDebugMode) print('DEBUG: 波形表示チェック - playerController: ${playerController != null}, _isPlayerPrepared: $_isPlayerPrepared, _audioFilePath: $_audioFilePath');
+      
+      if (playerController != null && _isPlayerPrepared) {
         return AudioFileWaveforms(
+          key: ValueKey(_audioFilePath), // ファイルパスをkeyとして設定
           playerController: playerController!,
           size: Size(MediaQuery.of(context).size.width - 80, 60),
           playerWaveStyle: const PlayerWaveStyle(
@@ -705,7 +714,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           waveformType: WaveformType.fitWidth,
         );
       } else {
-        // PlayerControllerが一時的に利用できない場合の代替表示
+        // PlayerControllerが準備中または利用できない場合の代替表示
         return const Center(
           child: Text(
             '録音完了 - 波形準備中...',
@@ -727,6 +736,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     if (!isRecordingSupported) {
       return null;
     }
+    
+    // 新しい録音開始時は波形準備状態をリセット
+    _isPlayerPrepared = false;
 
     try {
       if (isWeb) {
@@ -766,6 +778,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _uploadAndAnalyze() async {
+    if (kDebugMode) print('DEBUG: _uploadAndAnalyze() 関数開始');
     if (_audioFilePath == null) {
       if (kDebugMode) print('音声ファイルが存在しません');
       return;
@@ -788,8 +801,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       return;
     }
 
-    // 解析開始前にキャンセルフラグをリセット
-    _shouldCancelAnalysis = false;
+    // キャンセルされている場合は解析を実行しない
+    if (_shouldCancelAnalysis) {
+      if (kDebugMode) print('DEBUG: 解析がキャンセルされているため実行しません');
+      return;
+    }
     
     if (kDebugMode) print('API upload started: $_audioFilePath');
 
@@ -835,11 +851,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       }
 
       if (result != null) {
+        if (kDebugMode) print('DEBUG: 解析成功、状態をidleに変更');
         setState(() {
           _analysisResult = result;
           _recordingState = RecordingState.idle;
-          _isAnalyzed = true;
-        });
+              });
         // プログレスアニメーションを停止
         _progressAnimationController.stop();
 
@@ -855,6 +871,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           );
         }
       } else {
+        if (kDebugMode) print('DEBUG: 解析結果がnull、状態をidleに変更');
         setState(() {
           _recordingState = RecordingState.idle;
         });
@@ -874,6 +891,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       // キャンセルされた場合はエラーメッセージを表示しない
       if (_shouldCancelAnalysis) {
         if (kDebugMode) print('解析がキャンセルされました（エラー処理中）');
+        setState(() {
+          _recordingState = RecordingState.idle;
+        });
         return;
       }
       
@@ -1593,7 +1613,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                             ],
                             const SizedBox(height: 20),
                             _buildAnalysisResults(),
-                            if (_isAnalyzed) const SizedBox(height: 20),
+                            if (_analysisResult != null) const SizedBox(height: 20),
                             _buildBackingTrackPlayer(),
                           ],
                         ),
@@ -2607,7 +2627,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    if (_isAnalyzed && _analysisResult != null) ...[
+                    if (_analysisResult != null) ...[
                       InkWell(
                         onTap: _toggleBackingTrackPlayback,
                         borderRadius: BorderRadius.circular(30),
